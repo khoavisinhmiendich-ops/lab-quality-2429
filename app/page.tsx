@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
-import { EditableForm } from '@/components/EditableForm';
+import  EditableForm from '@/components/EditableForm';
 import { Folder, FileText, ChevronRight, ChevronDown, ShieldCheck, Loader2, Search } from 'lucide-react';
 
 interface DocNode {
