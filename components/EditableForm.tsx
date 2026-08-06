@@ -26,7 +26,7 @@ export function EditableForm({
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Đổi key sang v99 để ép làm sạch localStorage cũ của người dùng
-  const storageKey = `v99_clean_all_${pdfPath || docCode}`;
+  const storageKey = `v101_clean_margins_${pdfPath || docCode}`;
 
   useEffect(() => {
     const fetchContent = async () => {
@@ -72,35 +72,42 @@ export function EditableForm({
   return (
     <div className="flex-1 bg-[#edebe9] rounded-lg border border-[#d2d0ce] shadow-inner overflow-auto p-4 flex justify-center items-start">
       {/* CSS Cưỡng chế bắt buộc bảng phải co giãn 100% theo khung A4 */}
-      <style jsx global>{`
-        .a4-paper-container {
-          width: 210mm !important;
-          max-width: 100% !important;
-          box-sizing: border-box !important;
-        }
-        .a4-paper-container table {
-          width: 100% !important;
-          max-width: 100% !important;
-          table-layout: fixed !important;
-          border-collapse: collapse !important;
-          margin-top: 8px !important;
-          margin-bottom: 8px !important;
-        }
-        .a4-paper-container td,
-        .a4-paper-container th {
-          word-wrap: break-word !important;
-          word-break: break-all !important;
-          white-space: normal !important;
-          overflow-wrap: anywhere !important;
-          padding: 4px 3px !important;
-          font-size: 11px !important;
-          border: 1px solid #323130 !important;
-        }
-        .a4-paper-container img {
-          max-width: 100% !important;
-          height: auto !important;
-        }
-      `}</style>
+   <style jsx global>{`
+  .a4-paper-container {
+    width: 210mm !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  
+  /* Triệt tiêu lề thụt âm (negative margin) của file Word */
+  .a4-paper-container table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    margin-top: 8px !important;
+    margin-bottom: 8px !important;
+    margin-left: 0 !important;   /* Xóa lề trái bị thụt âm do Word */
+    margin-right: 0 !important;  /* Xóa lề phải bị lệch */
+    transform: none !important;
+  }
+
+  .a4-paper-container td,
+  .a4-paper-container th {
+    word-wrap: break-word !important;
+    word-break: break-all !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    padding: 4px 3px !important;
+    font-size: 11px !important;
+    border: 1px solid #323130 !important;
+  }
+
+  .a4-paper-container img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+`}</style>
 
       {isPdf ? (
         <iframe src={`${encodeURI(pdfPath || "")}#toolbar=1`} className="w-full h-full border-none" title={docTitle} />
