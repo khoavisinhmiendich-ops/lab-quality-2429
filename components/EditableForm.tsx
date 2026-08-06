@@ -49,18 +49,19 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
         }
 
         if (isMounted) {
-          // Bóc tách hoàn toàn thuộc tính width/height cứng của table và td từ file Word gốc
-          const cleanedHtml = data.html
-            .replace(/width="[^"]*"/gi, '')
-            .replace(/height="[^"]*"/gi, '')
-            .replace(/style="[^"]*"/gi, (match: string) => {
-              return match
-                .replace(/width:[^;]+(;|$)/gi, '')
-                .replace(/height:[^;]+(;|$)/gi, '')
-                .replace(/line-height:[^;]+(;|$)/gi, '')
-                .replace(/margin-top:[^;]+(;|$)/gi, '')
-                .replace(/margin-bottom:[^;]+(;|$)/gi, '');
-            });
+          // Bóc tách hoàn toàn thuộc tính width/height, thẻ col và inline style tràn bảng
+const cleanedHtml = data.html
+  .replace(/<col[^>]*>/gi, '') // Xóa sạch các thẻ <col> quy định chiều rộng cột
+  .replace(/width="[^"]*"/gi, '')
+  .replace(/height="[^"]*"/gi, '')
+  .replace(/style="[^"]*"/gi, (match: string) => {
+    return match
+      .replace(/width:[^;]+(;|$)/gi, '')
+      .replace(/height:[^;]+(;|$)/gi, '')
+      .replace(/line-height:[^;]+(;|$)/gi, '')
+      .replace(/margin-top:[^;]+(;|$)/gi, '')
+      .replace(/margin-bottom:[^;]+(;|$)/gi, '');
+  });
 
           setContentHtml(cleanedHtml);
           setLastSaved('Đã đồng bộ');
@@ -275,7 +276,7 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
                 </div>
                 <div>
                   <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA</h4>
-                  <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG KHOA VI SINH - MIỄN DỊCH</p>
+                  <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG KHOA 2429 VI SINH - MIỄN DỊCH</p>
                 </div>
               </div>
               <div className="text-right">
