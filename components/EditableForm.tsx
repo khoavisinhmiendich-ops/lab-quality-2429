@@ -228,7 +228,7 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
                     />
                   </div>
                   <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">KHOA VI SINH - MIỄN DỊCH</h4>
+                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA</h4>
                     <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG  KHOA VI SINH - MIỄN DỊCH</p>
                   </div>
                 </div>
@@ -243,16 +243,16 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
               </div>
 
               <div
-                ref={containerRef}
-                onBlur={handleBlur}
-                dangerouslySetInnerHTML={{ __html: contentHtml }}
-                className="outline-none w-full text-base text-[#201f1e] bg-white leading-relaxed font-['Times_New_Roman',Times,serif] 
-                  user-select-text
-                  [&_table]:w-full [&_table]:border-collapse [&_table]:table-auto [&_table]:my-2
-                  [&_td]:border [&_td]:border-[#323130] [&_td]:p-1.5 [&_td]:align-middle [&_td]:focus:bg-[#eff6fc] [&_td]:focus:outline-2 [&_td]:focus:outline-[#0078d4] [&_td]:cursor-text
-                  [&_th]:border [&_th]:border-[#323130] [&_th]:p-1.5 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_tr]:h-auto 
-                  [&_p]:my-1"
-              />
+  ref={containerRef}
+  onBlur={handleBlur}
+  dangerouslySetInnerHTML={{ __html: contentHtml }}
+  className="outline-none w-full text-sm text-[#201f1e] bg-white leading-tight font-['Times_New_Roman',Times,serif] 
+    user-select-text
+    [&_table]:w-full [&_table]:border-collapse [&_table]:table-auto [&_table]:my-1
+    [&_td]:border [&_td]:border-[#323130] [&_td]:py-1 [&_td]:px-1.5 [&_td]:align-middle [&_td]:text-xs [&_td]:focus:bg-[#eff6fc] [&_td]:focus:outline-2 [&_td]:focus:outline-[#0078d4] [&_td]:cursor-text
+    [&_th]:border [&_th]:border-[#323130] [&_th]:py-1 [&_th]:px-1.5 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_th]:text-xs [&_tr]:h-auto 
+    [&_p]:my-0.5"
+/>
             </div>
           </div>
         )}
