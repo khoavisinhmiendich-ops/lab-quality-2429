@@ -46,7 +46,7 @@ export const Header: React.FC = () => {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="https://upload.wikimedia.org/wikipedia/commons/e/e8/Logo_Bo_Y_Te_Huong_Phai_Xanh.svg"
-                alt="Logo Bệnh viện"
+                alt="https://bvquyhoa.vn/wp-content/uploads/2022/03/LOGO-390x220.png"
                 className="w-full h-full object-contain"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
@@ -68,7 +68,7 @@ export const Header: React.FC = () => {
               KHOA VI SINH - MIỄN DỊCH
             </h1>
             <p className="text-[11px] font-semibold text-slate-500 tracking-wide">
-              QUẢN LÝ CHẤT LƯỢNG 2429 - SMARTLAB 360
+              QUẢN LÝ CHẤT LƯỢNG 2429 - KHOA VI SINH - MIỄN DỊCH
             </p>
           </div>
         </div>

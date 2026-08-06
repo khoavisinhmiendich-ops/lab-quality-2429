@@ -89,31 +89,79 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
     };
   }, [pdfPath, storageKey, docCode, docTitle, isPdf]);
 
-  useEffect(() => {
+  const handleInput = () => {
     if (!containerRef.current) return;
-    const cells = containerRef.current.querySelectorAll('td, th');
-    cells.forEach((cell) => {
-      const htmlCell = cell as HTMLElement;
-      if (htmlCell.getAttribute('contenteditable') !== 'true') {
-        htmlCell.setAttribute('contenteditable', 'true');
-        htmlCell.style.outline = 'none';
-      }
-    });
-  }, [contentHtml]);
-
-  const handleBlur = () => {
-    if (!containerRef.current) return;
-
-    const cells = containerRef.current.querySelectorAll('td, th');
-    cells.forEach((cell) => cell.removeAttribute('contenteditable'));
-
     const html = containerRef.current.innerHTML;
-
-    cells.forEach((cell) => cell.setAttribute('contenteditable', 'true'));
-
     localStorage.setItem(storageKey, html);
     const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setLastSaved(`Đã lưu lúc ${timeStr}`);
+  };
+
+  // Xử lý phím Tab độc quyền bên trong trang tài liệu MS Word
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault(); // Chặn việc Tab bị nhảy ra ngoài khung Word
+
+      const selection = window.getSelection();
+      if (!selection || !selection.rangeCount) return;
+
+      const range = selection.getRangeAt(0);
+      const node = selection.anchorNode;
+      const td = node?.nodeType === 1 ? (node as HTMLElement).closest('td') : node?.parentElement?.closest('td');
+
+      if (td) {
+        // Nếu đang ở trong Bảng: Chuyển sang ô tiếp theo
+        const tr = td.parentElement as HTMLTableRowElement;
+        const table = tr?.parentElement as HTMLTableSectionElement;
+        const nextTd = td.nextElementSibling as HTMLTableCellElement;
+
+        if (nextTd) {
+          // Nhảy sang ô tiếp theo cùng hàng
+          const newRange = document.createRange();
+          newRange.selectNodeContents(nextTd);
+          newRange.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(newRange);
+        } else if (tr.nextElementSibling) {
+          // Nhảy sang ô đầu tiên của hàng tiếp theo
+          const nextRow = tr.nextElementSibling as HTMLTableRowElement;
+          const firstCell = nextRow.cells[0];
+          if (firstCell) {
+            const newRange = document.createRange();
+            newRange.selectNodeContents(firstCell);
+            newRange.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }
+        } else if (table && tr === table.lastElementChild) {
+          // Ở ô cuối cùng của bảng -> Thêm dòng mới
+          const newRow = tr.cloneNode(true) as HTMLTableRowElement;
+          Array.from(newRow.cells).forEach(cell => {
+            cell.innerHTML = '&nbsp;';
+          });
+          table.appendChild(newRow);
+
+          setTimeout(() => {
+            const firstCell = newRow.cells[0];
+            const newRange = document.createRange();
+            newRange.selectNodeContents(firstCell);
+            newRange.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }, 0);
+          handleInput();
+        }
+      } else {
+        // Nếu ở văn bản thường: Thêm 4 khoảng trắng (Thụt lề dòng)
+        const tabNode = document.createTextNode('\u00a0\u00a0\u00a0\u00a0');
+        range.insertNode(tabNode);
+        range.setStartAfter(tabNode);
+        range.setEndAfter(tabNode);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        handleInput();
+      }
+    }
   };
 
   const handleReset = () => {
@@ -125,7 +173,8 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
 
   return (
     <div className="flex-1 bg-[#f3f2f1] p-5 flex flex-col h-full overflow-hidden font-['Times_New_Roman',Times,serif]">
-      <div className="mb-4 bg-white border border-[#edebe9] rounded-lg shadow-sm px-4 py-3 flex items-center justify-between shrink-0 font-sans">
+      {/* Thanh công cụ */}
+      <div className="mb-4 bg-white border border-[#edebe9] rounded-lg shadow-sm px-4 py-3 flex items-center justify-between shrink-0 font-sans print:hidden">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded bg-[#107c41] flex items-center justify-center text-white shadow-sm shrink-0">
             <FileText className="w-5 h-5" />
@@ -187,7 +236,8 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
         </div>
       </div>
 
-      <div className="flex-1 bg-[#edebe9] rounded-lg border border-[#d2d0ce] shadow-inner overflow-hidden flex flex-col">
+      {/* Khu vực chứa tờ giấy Word */}
+      <div className="flex-1 bg-[#edebe9] rounded-lg border border-[#d2d0ce] shadow-inner overflow-y-auto p-6 flex justify-center">
         {isPdf ? (
           <iframe src={`${encodeURI(pdfPath || '')}#toolbar=1`} className="w-full h-full border-none" title={docTitle} />
         ) : isWord && viewMode === 'preview' ? (
@@ -206,54 +256,51 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
             )}
           </div>
         ) : loading ? (
-          <div className="flex items-center justify-center h-full gap-2 text-xs text-[#605e5c] bg-white">
+          <div className="flex items-center justify-center h-full gap-2 text-xs text-[#605e5c] bg-white w-full">
             <Loader2 className="w-5 h-5 animate-spin text-[#107c41]" />
             <span>Đang tải biểu mẫu từ hệ thống...</span>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-[#f3f2f1]">
-            {/* Thu nhỏ lề trang giấy từ 20mm xuống 15mm và thu gọn khoảng cách header */}
-            <div className="w-[210mm] min-h-[297mm] bg-white border border-[#c8c6c4] shadow-md p-[15mm] rounded-xs text-[#201f1e] relative">
-              
-              {/* Phần tiêu đề chuẩn bệnh viện gọn gàng, chống bị đẩy nội dung */}
-              <div className="flex items-center justify-between border-b-2 border-slate-800 pb-2 mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="shrink-0">
-                    <Image 
-                      src="/hospital-logo.png" 
-                      alt="Logo Bệnh viện" 
-                      width={40} 
-                      height={40} 
-                      className="object-contain w-10 h-10"
-                    />
-                  </div>
-                  <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA</h4>
-                    <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG  KHOA VI SINH - MIỄN DỊCH</p>
-                  </div>
+          /* Trang giấy A4 ôm trọn nội dung, tự kéo dài không bao giờ bị tràn */
+          <div className="w-[210mm] min-h-[297mm] h-fit bg-white border border-[#c8c6c4] shadow-md p-[15mm] rounded-xs text-[#201f1e] relative mb-10">
+            
+            {/* Header Bệnh viện */}
+            <div className="flex items-center justify-between border-b-2 border-slate-800 pb-2 mb-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="shrink-0">
+                  <Image 
+                    src="/hospital-logo.png" 
+                    alt="Logo Bệnh viện" 
+                    width={40} 
+                    height={40} 
+                    className="object-contain w-10 h-10"
+                  />
                 </div>
-                <div className="text-right">
-                  <span className="text-[11px] font-bold text-rose-700 font-mono bg-rose-50 px-2 py-0.5 rounded border border-rose-200">{docCode}</span>
+                <div>
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA</h4>
+                  <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG 2429 KHOA VI SINH - MIỄN DỊCH</p>
                 </div>
               </div>
-
-              <div className="text-[10px] text-[#107c41] font-semibold mb-3 pb-1 border-b border-[#edebe9] flex justify-between items-center uppercase tracking-wide font-sans">
-                <span>Microsoft Word Online - Nhấp vào các ô trong bảng để nhập dữ liệu</span>
-                <span className="text-[#8a8886] font-mono">{docCode}</span>
+              <div className="text-right">
+                <span className="text-[11px] font-bold text-rose-700 font-mono bg-rose-50 px-2 py-0.5 rounded border border-rose-200">{docCode}</span>
               </div>
-
-              <div
-  ref={containerRef}
-  onBlur={handleBlur}
-  dangerouslySetInnerHTML={{ __html: contentHtml }}
-  className="outline-none w-full text-sm text-[#201f1e] bg-white leading-tight font-['Times_New_Roman',Times,serif] 
-    user-select-text
-    [&_table]:w-full [&_table]:border-collapse [&_table]:table-auto [&_table]:my-1
-    [&_td]:border [&_td]:border-[#323130] [&_td]:py-1 [&_td]:px-1.5 [&_td]:align-middle [&_td]:text-xs [&_td]:focus:bg-[#eff6fc] [&_td]:focus:outline-2 [&_td]:focus:outline-[#0078d4] [&_td]:cursor-text
-    [&_th]:border [&_th]:border-[#323130] [&_th]:py-1 [&_th]:px-1.5 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_th]:text-xs [&_tr]:h-auto 
-    [&_p]:my-0.5"
-/>
             </div>
+
+            {/* Vùng soạn thảo Word chính */}
+<div
+  ref={containerRef}
+  contentEditable={true}
+  suppressContentEditableWarning={true}
+  onInput={handleInput}
+  onKeyDown={handleKeyDown}
+  dangerouslySetInnerHTML={{ __html: contentHtml }}
+  className="outline-none w-full text-base text-[#201f1e] bg-white leading-relaxed font-['Times_New_Roman',Times,serif] 
+    select-text user-select-auto cursor-text overflow-x-auto
+    [&_table]:max-w-full [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:table-fixed
+    [&_td]:border [&_td]:border-[#323130] [&_td]:p-0.5 [&_td]:text-center [&_td]:align-middle [&_td]:text-[11px] [&_td]:focus:bg-[#eff6fc] [&_td]:focus:outline-2 [&_td]:focus:outline-[#0078d4] [&_td]:break-words
+    [&_th]:border [&_th]:border-[#323130] [&_th]:p-0.5 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_th]:text-[11px] [&_tr]:h-auto 
+    [&_p]:my-1"
+/>
           </div>
         )}
       </div>

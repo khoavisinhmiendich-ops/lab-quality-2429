@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { EditableForm } from '@/components/EditableForm';
-import { Folder, FileText, ChevronRight, ChevronDown, ShieldCheck, Loader2 } from 'lucide-react';
+import { Folder, FileText, ChevronRight, ChevronDown, ShieldCheck, Loader2, Search } from 'lucide-react';
 
 interface DocNode {
   id: string;
@@ -19,8 +19,8 @@ export default function Home() {
   const [loading, setLoading] = useState<boolean>(true);
   const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
   const [selectedDoc, setSelectedDoc] = useState<{ code: string; title: string; path: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Gọi API lấy toàn bộ danh mục file tự động
   useEffect(() => {
     fetch('/api/docs')
       .then((res) => res.json())
@@ -28,14 +28,20 @@ export default function Home() {
         if (data.success && data.tree) {
           setTreeData(data.tree);
 
-          // Tự động mở tất cả thư mục cấp 1
+          // Tự động mở tất cả thư mục cấp 1 & cấp 2 (12 Chương & Thư mục con)
           const initialOpen: Record<string, boolean> = {};
-          data.tree.forEach((node: DocNode) => {
-            if (node.isFolder) initialOpen[node.id] = true;
-          });
+          const openAllFolders = (nodes: DocNode[]) => {
+            nodes.forEach((node) => {
+              if (node.isFolder) {
+                initialOpen[node.id] = true;
+                if (node.children) openAllFolders(node.children);
+              }
+            });
+          };
+          openAllFolders(data.tree);
           setOpenNodes(initialOpen);
 
-          // Chọn mặc định file đầu tiên tìm thấy
+          // Chọn file đầu tiên tìm thấy làm mặc định
           const findFirstFile = (nodes: DocNode[]): DocNode | null => {
             for (const n of nodes) {
               if (!n.isFolder && n.path) return n;
@@ -64,11 +70,21 @@ export default function Home() {
     setOpenNodes((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // Render đệ quy cây thư mục bất kỳ độ sâu nào
+  // Render cây thư mục đệ quy đa cấp
   const renderTree = (nodes: DocNode[]) => {
     return nodes.map((node) => {
+      // Lọc theo từ khóa tìm kiếm nếu có
+      if (searchQuery.trim() !== '') {
+        const matchesSearch = node.title.toLowerCase().includes(searchQuery.toLowerCase());
+        if (!node.isFolder && !matchesSearch) return null;
+      }
+
       if (node.isFolder) {
         const isOpen = !!openNodes[node.id];
+        const hasChildren = node.children && node.children.length > 0;
+
+        if (!hasChildren) return null;
+
         return (
           <div key={node.id} className="space-y-0.5">
             <button
@@ -85,7 +101,7 @@ export default function Home() {
             </button>
 
             {isOpen && node.children && (
-              <div className="ml-4 pl-1 border-l border-slate-200 space-y-0.5">
+              <div className="ml-3 pl-1.5 border-l border-slate-200 space-y-0.5">
                 {renderTree(node.children)}
               </div>
             )}
@@ -111,7 +127,7 @@ export default function Home() {
           }`}
         >
           <FileText className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-rose-600' : 'text-slate-400'}`} />
-          <span className="truncate">{node.title}</span>
+          <span className="truncate" title={node.title}>{node.title}</span>
         </button>
       );
     });
@@ -122,20 +138,32 @@ export default function Home() {
       <Header />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Cột danh mục Cây thư mục tự động */}
+        {/* Sidebar hiển thị trọn bộ cây thư mục */}
         <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-sm">
-          <div className="p-3 bg-slate-50 border-b border-slate-200">
+          <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
             <h3 className="text-xs font-bold uppercase text-slate-800 tracking-wide flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               <span>HỒ SƠ QUẢN LÝ CHẤT LƯỢNG 2429</span>
             </h3>
+
+            {/* Ô tìm kiếm nhanh biểu mẫu */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm tên file, biểu mẫu..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1 text-xs outline-none focus:border-rose-500 transition-all"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {loading ? (
               <div className="flex items-center justify-center p-8 gap-2 text-xs text-slate-400">
                 <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
-                <span>Đang tải danh mục...</span>
+                <span>Đang tải toàn bộ 12 chương...</span>
               </div>
             ) : (
               renderTree(treeData)
@@ -143,13 +171,13 @@ export default function Home() {
           </div>
         </aside>
 
-        {/* Màn hình hiển thị và điền văn bản */}
+        {/* Khung xem và điền văn bản */}
         <main className="flex-1 overflow-hidden bg-slate-100">
           {selectedDoc ? (
             <EditableForm docCode={selectedDoc.code} docTitle={selectedDoc.title} pdfPath={selectedDoc.path} />
           ) : (
             <div className="flex items-center justify-center h-full text-xs text-slate-400">
-              Vui lòng chọn tài liệu từ cây danh mục bên trái
+              Vui lòng chọn tài liệu từ danh mục bên trái
             </div>
           )}
         </main>

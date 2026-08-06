@@ -1,19 +1,29 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  body {
+    background-color: #f3f2f1;
+    color: #201f1e;
+    font-family: "Times New Roman", Times, serif;
+    margin: 0;
+    padding: 0;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Định dạng cấu hình in ấn A4 chuẩn cho trình duyệt */
+@media print {
+  body {
+    background-color: white !important;
+  }
+
+  /* Ẩn tất cả các thanh công cụ, menu điều hướng khi in */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Bắt buộc giữ nguyên bố cục A4 khi in */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
 }
