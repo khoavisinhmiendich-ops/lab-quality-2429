@@ -169,6 +169,22 @@ const cleanedHtml = data.html
       window.location.reload();
     }
   };
+  <style jsx global>{`
+  /* Ép tất cả bảng trong vùng soạn thảo phải nằm gọn 100% trong trang A4 */
+  [contenteditable="true"] table {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+  }
+  [contenteditable="true"] td, 
+  [contenteditable="true"] th {
+    word-break: break-all !important;
+    overflow-wrap: break-word !important;
+    white-space: normal !important;
+    width: auto !important;
+  }
+`}</style>
 
   return (
     <div className="flex-1 bg-[#f3f2f1] p-5 flex flex-col h-full overflow-hidden font-['Times_New_Roman',Times,serif]">
@@ -283,9 +299,8 @@ const cleanedHtml = data.html
                 <span className="text-[11px] font-bold text-rose-700 font-mono bg-rose-50 px-2 py-0.5 rounded border border-rose-200">{docCode}</span>
               </div>
             </div>
-
-            {/* Vùng soạn thảo Word với CSS cưỡng chế width !important */}
-           <div
+           {/* Vùng soạn thảo Word chuẩn chỉnh không bao giờ vỡ khung */}
+<div
   ref={containerRef}
   contentEditable={true}
   suppressContentEditableWarning={true}
@@ -293,10 +308,10 @@ const cleanedHtml = data.html
   onKeyDown={handleKeyDown}
   dangerouslySetInnerHTML={{ __html: contentHtml }}
   className="outline-none w-full text-sm text-[#201f1e] bg-white leading-relaxed font-['Times_New_Roman',Times,serif] 
-    select-text user-select-auto cursor-text overflow-x-auto
-    [&_table]:w-full! [&_table]:max-w-full! [&_table]:border-collapse [&_table]:my-2 [&_table]:table-fixed
-    [&_td]:border [&_td]:border-[#323130] [&_td]:p-0.5 [&_td]:text-center [&_td]:align-middle [&_td]:text-[10px] [&_td]:break-all [&_td]:focus:bg-[#eff6fc]
-    [&_th]:border [&_th]:border-[#323130] [&_th]:p-0.5 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_th]:text-[10px] [&_tr]:h-auto 
+    select-text user-select-auto cursor-text
+    [&_table]:w-full! [&_table]:max-w-full! [&_table]:min-w-0! [&_table]:border-collapse [&_table]:my-2 [&_table]:table-fixed!
+    [&_td]:border [&_td]:border-[#323130] [&_td]:p-1 [&_td]:text-center [&_td]:align-middle [&_td]:text-[11px] [&_td]:break-all! [&_td]:whitespace-normal! [&_td]:focus:bg-[#eff6fc]
+    [&_th]:border [&_th]:border-[#323130] [&_th]:p-1 [&_th]:bg-[#f3f2f1] [&_th]:text-center [&_th]:font-bold [&_th]:text-[11px] [&_th]:break-all! [&_th]:whitespace-normal! [&_tr]:h-auto 
     [&_p]:my-1"
 />
           </div>
