@@ -25,8 +25,8 @@ export function EditableForm({
   const [loading, setLoading] = useState<boolean>(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Đổi sang v35 để hủy toàn bộ cache cũ
-  const storageKey = `v35_auto_fit_a4_${pdfPath || docCode}`;
+  // Đổi key sang v99 để ép làm sạch localStorage cũ của người dùng
+  const storageKey = `v99_clean_all_${pdfPath || docCode}`;
 
   useEffect(() => {
     const fetchContent = async () => {
@@ -43,20 +43,7 @@ export function EditableForm({
           const res = await fetch(`/api/read-doc?path=${encodeURIComponent(pdfPath)}`);
           const data = await res.json();
           if (data.html) {
-            // Xóa triệt để các thuộc tính width/height cố định trong HTML Word
-            const cleanedHtml = data.html
-              .replace(/<col[^>]*>/gi, "")
-              .replace(/width="[^"]*"/gi, "")
-              .replace(/height="[^"]*"/gi, "")
-              .replace(/style="[^"]*"/gi, (match: string) => {
-                return match
-                  .replace(/width:[^;]+(;|$)/gi, "")
-                  .replace(/height:[^;]+(;|$)/gi, "")
-                  .replace(/line-height:[^;]+(;|$)/gi, "")
-                  .replace(/margin-top:[^;]+(;|$)/gi, "")
-                  .replace(/margin-bottom:[^;]+(;|$)/gi, "");
-              });
-            setContentHtml(cleanedHtml);
+            setContentHtml(data.html);
           }
         }
       } catch (err) {
@@ -84,12 +71,12 @@ export function EditableForm({
 
   return (
     <div className="flex-1 bg-[#edebe9] rounded-lg border border-[#d2d0ce] shadow-inner overflow-auto p-4 flex justify-center items-start">
-      {/* CSS Cưỡng chế ép bảng luôn ép gọn vào khung giấy A4 */}
+      {/* CSS Cưỡng chế bắt buộc bảng phải co giãn 100% theo khung A4 */}
       <style jsx global>{`
         .a4-paper-container {
-          min-width: 210mm !important;
-          width: fit-content !important;
+          width: 210mm !important;
           max-width: 100% !important;
+          box-sizing: border-box !important;
         }
         .a4-paper-container table {
           width: 100% !important;
@@ -101,11 +88,13 @@ export function EditableForm({
         }
         .a4-paper-container td,
         .a4-paper-container th {
-          word-break: break-word !important;
-          overflow-wrap: break-word !important;
+          word-wrap: break-word !important;
+          word-break: break-all !important;
           white-space: normal !important;
+          overflow-wrap: anywhere !important;
           padding: 4px 3px !important;
           font-size: 11px !important;
+          border: 1px solid #323130 !important;
         }
         .a4-paper-container img {
           max-width: 100% !important;
@@ -138,7 +127,7 @@ export function EditableForm({
           <span>Đang tải biểu mẫu từ hệ thống...</span>
         </div>
       ) : (
-        <div className="a4-paper-container min-h-[297mm] h-fit bg-white border border-[#c8c6c4] shadow-md p-6 sm:p-[10mm] text-[#201f1e] relative mb-10 shrink-0 box-border">
+        <div className="a4-paper-container min-h-[297mm] h-fit bg-white border border-[#c8c6c4] shadow-md p-6 sm:p-[10mm] text-[#201f1e] relative mb-10 shrink-0">
           
           {/* Header Bệnh viện */}
           <div className="flex items-center justify-between border-b-2 border-slate-800 pb-2 mb-3 w-full">
