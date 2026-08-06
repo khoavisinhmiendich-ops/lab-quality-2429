@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const docPath = searchParams.get("path");
 
     if (!docPath) {
-      return NextResponse.json({ error: "Missing path" }, { status: 400 });
+      return NextResponse.json({ error: "Missing path parameter" }, { status: 400 });
     }
 
     const filePath = path.join(process.cwd(), "public", docPath);
@@ -19,24 +19,45 @@ export async function GET(request: Request) {
     }
 
     const buffer = fs.readFileSync(filePath);
-    // Convert Buffer sang ArrayBuffer để đúng kiểu dữ liệu mammoth yêu cầu
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    
+    // Chuyển đổi Buffer sang ArrayBuffer chuẩn cho Mammoth
+    const arrayBuffer = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    );
 
-    // Chuyển đổi Word sang HTML
     const result = await mammoth.convertToHtml({ arrayBuffer });
     let html = result.value;
 
-    // Lọc sạch triệt để các thuộc tính width/height cố định do Word tạo ra
+    // Lọc bỏ triệt để các style cố định và lề âm của Word
     html = html
       .replace(/<col[^>]*>/gi, "")
       .replace(/\s*width="[^"]*"/gi, "")
       .replace(/\s*height="[^"]*"/gi, "")
-      .replace(/style="([^"]*)"/gi, (_, styleContent) => {
+      .replace(/style="([^"]*)"/gi, (match: string, styleContent: string) => {
+        if (!styleContent) return "";
         const cleanedStyle = styleContent
           .split(";")
           .filter((rule: string) => {
             const prop = rule.split(":")[0]?.trim().toLowerCase();
-            return !["width", "min-width", "max-width", "height", "white-space"].includes(prop);
+            return (
+              prop &&
+              ![
+                "width",
+                "min-width",
+                "max-width",
+                "height",
+                "min-height",
+                "max-height",
+                "margin",
+                "margin-left",
+                "margin-right",
+                "margin-top",
+                "margin-bottom",
+                "text-indent",
+                "white-space",
+              ].includes(prop)
+            );
           })
           .join(";");
         return cleanedStyle ? `style="${cleanedStyle}"` : "";
@@ -45,6 +66,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ html });
   } catch (error) {
     console.error("Read doc error:", error);
-    return NextResponse.json({ error: "Error reading document" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Error reading document from server" },
+      { status: 500 }
+    );
   }
 }
