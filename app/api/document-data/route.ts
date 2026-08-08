@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-
-const globalStore: Record<string, string> = {};
+import { db } from '@/lib/firebase';
+import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -10,8 +10,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing key' }, { status: 400 });
   }
 
-  const content = globalStore[key] || null;
-  return NextResponse.json({ content });
+  try {
+    const docRef = doc(db, 'documents', key);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      return NextResponse.json({ content: docSnap.data().content || null });
+    }
+    return NextResponse.json({ content: null });
+  } catch (err) {
+    console.error('Lỗi đọc Firestore:', err);
+    return NextResponse.json({ content: null });
+  }
 }
 
 export async function POST(request: Request) {
@@ -22,10 +32,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing key' }, { status: 400 });
     }
 
-    globalStore[key] = content;
+    const docRef = doc(db, 'documents', key);
+
+    if (content === null) {
+      await deleteDoc(docRef);
+    } else {
+      await setDoc(docRef, {
+        content,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('Lỗi lưu trữ:', err);
-    return NextResponse.json({ error: 'Invalid request' }, { status: 500 });
+    console.error('Lỗi ghi Firestore:', err);
+    return NextResponse.json({ error: 'Failed to save to Firestore' }, { status: 500 });
   }
 }
