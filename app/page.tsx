@@ -9,6 +9,7 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaved, setIsSaved] = useState<boolean>(true);
   const editorRef = useRef<HTMLDivElement>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Xác định định dạng file
   const getFileType = (file: DocumentNode) => {
@@ -34,29 +35,39 @@ export default function HomePage() {
     if (fileType !== 'word' || !selectedFile.path) return;
 
     let isSubscribed = true;
-    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
+    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
 
     const loadDocument = async () => {
-      // 1. Kiểm tra LocalStorage
-      const savedData = localStorage.getItem(storageKey);
-
-      if (savedData) {
-        if (isSubscribed) {
-          setHtmlContent(savedData);
-          setIsLoading(false);
-          setIsSaved(true);
-        }
-        return;
-      }
-
-      // 2. Tải và convert file Word sang HTML
-      if (isSubscribed) {
-        setIsLoading(true);
-      }
+      if (isSubscribed) setIsLoading(true);
 
       try {
+        // 1. Thử tải dữ liệu mới nhất từ Cloud (Server)
+        const cloudRes = await fetch(`/api/document-data?key=${encodeURIComponent(docKey)}`);
+        const cloudData = await cloudRes.json();
+
+        if (cloudData && cloudData.content) {
+          if (isSubscribed) {
+            setHtmlContent(cloudData.content);
+            setIsSaved(true);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        // 2. Thử tải từ LocalStorage nếu server chưa có
+        const savedLocal = localStorage.getItem(docKey);
+        if (savedLocal) {
+          if (isSubscribed) {
+            setHtmlContent(savedLocal);
+            setIsSaved(true);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        // 3. Tải file Word gốc nếu là lần đầu tiên mở
         const res = await fetch(selectedFile.path!);
-        if (!res.ok) throw new Error('Không thể tải file');
+        if (!res.ok) throw new Error('Không thể tải file gốc');
 
         const arrayBuffer = await res.arrayBuffer();
         const mammoth = await import('mammoth');
@@ -67,7 +78,7 @@ export default function HomePage() {
           setIsSaved(true);
         }
       } catch (err) {
-        console.error('Lỗi chuyển đổi file Word:', err);
+        console.error('Lỗi tải tài liệu:', err);
         if (isSubscribed) {
           setHtmlContent('<p style="color: red;">Không thể tải nội dung biểu mẫu.</p>');
         }
@@ -85,27 +96,57 @@ export default function HomePage() {
     };
   }, [selectedFile]);
 
-  // Tự động lưu vào LocalStorage khi chỉnh sửa/nhập liệu
+  // Tự động đồng bộ nội dung lên Cloud khi gõ phím (Debounce 800ms)
   const handleInput = () => {
     if (!selectedFile || !editorRef.current) return;
-    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
+    setIsSaved(false);
+
+    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
     const newContent = editorRef.current.innerHTML;
-    localStorage.setItem(storageKey, newContent);
-    setIsSaved(true);
+
+    // Lưu vào LocalStorage ngay lập tức
+    localStorage.setItem(docKey, newContent);
+
+    // Xóa bộ đếm cũ nếu đang gõ tiếp
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+    // Gửi lên Server Cloud sau khi ngừng gõ 800ms
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await fetch('/api/document-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: docKey, content: newContent }),
+        });
+        setIsSaved(true);
+      } catch (err) {
+        console.error('Lỗi đồng bộ Cloud:', err);
+      }
+    }, 800);
   };
 
-  // Nút khôi phục biểu mẫu gốc
+  // Khôi phục biểu mẫu gốc
   const handleReset = async () => {
     if (!selectedFile || !selectedFile.path) return;
-    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
-    localStorage.removeItem(storageKey);
+    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
 
+    localStorage.removeItem(docKey);
     setIsLoading(true);
+
     try {
+      // Xóa trên Cloud
+      await fetch('/api/document-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: docKey, content: null }),
+      });
+
+      // Tải lại bản gốc
       const res = await fetch(selectedFile.path);
       const arrayBuffer = await res.arrayBuffer();
       const mammoth = await import('mammoth');
       const result = await mammoth.convertToHtml({ arrayBuffer });
+
       setHtmlContent(result.value);
       if (editorRef.current) {
         editorRef.current.innerHTML = result.value;
@@ -118,7 +159,6 @@ export default function HomePage() {
     }
   };
 
-  // Nút In / Trích xuất PDF
   const handlePrint = () => {
     window.print();
   };
@@ -135,7 +175,7 @@ export default function HomePage() {
 
     const fileType = getFileType(selectedFile);
 
-    // 1. Dạng Tra cứu Internet (Text)
+    // 1. Tra cứu
     if (fileType === 'text' || selectedFile.content) {
       return (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs max-w-4xl mx-auto my-4 overflow-y-auto max-h-full">
@@ -151,7 +191,7 @@ export default function HomePage() {
       );
     }
 
-    // 2. Dạng PDF
+    // 2. PDF
     if (fileType === 'pdf' && selectedFile.path) {
       return (
         <iframe
@@ -162,21 +202,18 @@ export default function HomePage() {
       );
     }
 
-    // 3. Dạng Word/Biểu mẫu -> Khung A4 co giãn tự do
+    // 3. Biểu mẫu Word - Đồng bộ đa thiết bị
     if (fileType === 'word') {
       return (
         <div className="flex flex-col h-full bg-slate-100 overflow-hidden">
-          {/* Thanh công cụ biểu mẫu */}
           <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between shadow-xs print:hidden shrink-0 z-10">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold px-2.5 py-1 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center gap-1">
                 ✍️ Cho phép điền trực tiếp
               </span>
-              {isSaved && (
-                <span className="text-xs text-slate-500 flex items-center gap-1">
-                  ✓ Đã tự động lưu
-                </span>
-              )}
+              <span className="text-xs text-slate-500 flex items-center gap-1">
+                {isSaved ? '☁️ Đã đồng bộ Cloud' : '⏳ Đang lưu dữ liệu...'}
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -195,21 +232,17 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Vùng chứa tờ A4 - Cho phép cuộn dọc hoàn toàn khi A4 giãn dài */}
           <div className="flex-1 overflow-y-auto p-8 flex justify-center bg-slate-200/70">
             {isLoading ? (
               <div className="flex items-center gap-2 text-blue-600 font-semibold text-sm self-center">
-                <span className="animate-spin text-lg">⏳</span> Đang chuẩn bị biểu mẫu...
+                <span className="animate-spin text-lg">⏳</span> Đang đồng bộ dữ liệu từ Cloud...
               </div>
             ) : (
               <div
                 ref={editorRef}
                 contentEditable
                 suppressContentEditableWarning
-                onInput={() => {
-                  setIsSaved(false);
-                  handleInput();
-                }}
+                onInput={handleInput}
                 dangerouslySetInnerHTML={{ __html: htmlContent }}
                 className="bg-white shadow-2xl border border-slate-300 p-12 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-2 focus:ring-blue-500 rounded-xs mb-12 self-start [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-black [&_td]:p-2 [&_th]:border [&_th]:border-black [&_th]:p-2 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
                 style={{
@@ -228,10 +261,8 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden">
-      {/* Cột danh mục bên trái */}
       <FolderTree onSelectFile={(file) => setSelectedFile(file)} selectedFile={selectedFile} />
 
-      {/* Cột xem và điền biểu mẫu chính bên phải */}
       <main className="flex-1 h-full p-4 overflow-hidden print:p-0">
         <div className="h-full bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden flex flex-col print:border-none">
           {renderContent()}
