@@ -166,8 +166,8 @@ export default function HomePage() {
   const renderContent = () => {
     if (!selectedFile) {
       return (
-        <div className="flex flex-col items-center justify-center h-full text-slate-400">
-          <span className="text-5xl mb-3">📄</span>
+        <div className="flex flex-col items-center justify-center h-full text-slate-400 animate-fadeIn">
+          <span className="text-5xl mb-3 animate-bounce">📄</span>
           <p className="text-sm font-medium">Chọn một tài liệu hoặc biểu mẫu bên danh mục để xem nội dung</p>
         </div>
       );
@@ -178,9 +178,9 @@ export default function HomePage() {
     // 1. Tra cứu
     if (fileType === 'text' || selectedFile.content) {
       return (
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs max-w-4xl mx-auto my-4 overflow-y-auto max-h-full">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs max-w-4xl mx-auto my-4 overflow-y-auto max-h-full transition-all duration-300">
           <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
-            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-semibold text-xs rounded-full border border-blue-200">
+            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-semibold text-xs rounded-full border border-blue-200 transition-all duration-300 hover:scale-105">
               🌐 Tra cứu Internet
             </span>
           </div>
@@ -196,7 +196,7 @@ export default function HomePage() {
       return (
         <iframe
           src={`${selectedFile.path}#toolbar=1`}
-          className="w-full h-full border-0 rounded-lg shadow-inner"
+          className="w-full h-full border-0 rounded-lg shadow-inner transition-all duration-300"
           title={selectedFile.title}
         />
       );
@@ -205,13 +205,13 @@ export default function HomePage() {
     // 3. Biểu mẫu Word - Đồng bộ đa thiết bị
     if (fileType === 'word') {
       return (
-        <div className="flex flex-col h-full bg-slate-100 overflow-hidden">
-          <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between shadow-xs print:hidden shrink-0 z-10">
+        <div className="flex flex-col h-full bg-slate-100 overflow-hidden transition-all duration-300">
+          <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between shadow-xs print:hidden shrink-0 z-10 transition-all duration-300">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold px-2.5 py-1 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center gap-1">
+              <span className="text-xs font-semibold px-2.5 py-1 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center gap-1 transition-all duration-300 hover:scale-105">
                 ✍️ Cho phép điền trực tiếp
               </span>
-              <span className="text-xs text-slate-500 flex items-center gap-1">
+              <span className="text-xs text-slate-500 flex items-center gap-1 transition-all">
                 {isSaved ? '☁️ Đã đồng bộ Cloud' : '⏳ Đang lưu dữ liệu...'}
               </span>
             </div>
@@ -219,13 +219,13 @@ export default function HomePage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleReset}
-                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all cursor-pointer"
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all duration-300 transform hover:scale-105 cursor-pointer"
               >
                 🔄 Đặt lại mẫu gốc
               </button>
               <button
                 onClick={handlePrint}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs transition-all duration-300 transform hover:scale-105 flex items-center gap-1 cursor-pointer"
               >
                 🖨️ In / Trích xuất PDF
               </button>
@@ -234,7 +234,7 @@ export default function HomePage() {
 
           <div className="flex-1 overflow-y-auto p-8 flex justify-center bg-slate-200/70">
             {isLoading ? (
-              <div className="flex items-center gap-2 text-blue-600 font-semibold text-sm self-center">
+              <div className="flex items-center gap-2 text-blue-600 font-semibold text-sm self-center animate-pulse">
                 <span className="animate-spin text-lg">⏳</span> Đang đồng bộ dữ liệu từ Cloud...
               </div>
             ) : (
@@ -244,7 +244,7 @@ export default function HomePage() {
                 suppressContentEditableWarning
                 onInput={handleInput}
                 dangerouslySetInnerHTML={{ __html: htmlContent }}
-                className="bg-white shadow-2xl border border-slate-300 p-12 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-2 focus:ring-blue-500 rounded-xs mb-12 self-start [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-black [&_td]:p-2 [&_th]:border [&_th]:border-black [&_th]:p-2 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
+                className="bg-white shadow-2xl border border-slate-300 p-12 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-2 focus:ring-blue-500 rounded-xs mb-12 self-start [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-black [&_td]:p-2 [&_th]:border [&_th]:border-black [&_th]:p-2 print:shadow-none print:border-none print:w-full print:p-0 print:m-0 transition-all duration-200"
                 style={{
                   boxSizing: 'border-box',
                   wordBreak: 'break-word',
@@ -260,11 +260,12 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden">
+    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans">
+      {/* Sidebar chứa cây thư mục (đã bao gồm chỉnh sửa 12 chương và mục Sổ tay ngang hàng bên trong Component FolderTree) */}
       <FolderTree onSelectFile={(file) => setSelectedFile(file)} selectedFile={selectedFile} />
 
-      <main className="flex-1 h-full p-4 overflow-hidden print:p-0">
-        <div className="h-full bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden flex flex-col print:border-none">
+      <main className="flex-1 h-full p-4 overflow-hidden print:p-0 transition-all duration-300">
+        <div className="h-full bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden flex flex-col print:border-none transition-all duration-300">
           {renderContent()}
         </div>
       </main>
