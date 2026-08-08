@@ -1,144 +1,298 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect } from "react";
-import { DocumentItem } from "@/data/documentsData";
+import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
+import { Printer, CheckCircle2, Download, Loader2, RefreshCw, FileText, Edit3, Eye } from 'lucide-react';
 
-interface EditableFormProps {
-  selectedFile: DocumentItem | null;
+interface Props {
+  docCode: string;
+  docTitle: string;
+  pdfPath?: string;
 }
 
-export default function EditableForm({ selectedFile }: EditableFormProps) {
-  const [content, setContent] = useState<string>("");
+export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) => {
+  const storageKey = `v24_ms_style_logo_content_${pdfPath || docCode}`;
   const [loading, setLoading] = useState<boolean>(false);
+  const [lastSaved, setLastSaved] = useState<string>('Đã đồng bộ với đám mây');
+  const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
+  
+  const [contentHtml, setContentHtml] = useState<string>('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const isPdf = pdfPath?.toLowerCase().endsWith('.pdf');
+  const isWord = pdfPath?.toLowerCase().endsWith('.docx') || pdfPath?.toLowerCase().endsWith('.doc');
 
   useEffect(() => {
     let isMounted = true;
 
-    const loadDocument = async () => {
-      if (!selectedFile?.fileName) {
-        if (isMounted) setContent("");
+    const fetchContent = async () => {
+      if (!pdfPath || isPdf) return;
+
+      if (isMounted) setLoading(true);
+
+      const savedHtml = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+      if (savedHtml) {
+        if (isMounted) {
+          setContentHtml(savedHtml);
+          setLastSaved('Đã tải bản lưu gần đây');
+          setLoading(false);
+        }
         return;
       }
 
-      setLoading(true);
       try {
-        const res = await fetch(
-          `/api/read-doc?file=${encodeURIComponent(selectedFile.fileName)}`
-        );
+        const res = await fetch(`/api/read-doc?path=${encodeURIComponent(pdfPath)}`);
         const data = await res.json();
+
+        if (!res.ok || !data.success || !data.html) {
+          throw new Error('Không đọc được dữ liệu file');
+        }
+
         if (isMounted) {
-          if (data.success && data.type === "docx") {
-            setContent(data.html);
-          } else {
-            setContent("");
-          }
+          const cleanedHtml = data.html
+            .replace(/style="[^"]*"/gi, (match: string) => {
+              return match
+                .replace(/height:[^;]+(;|$)/gi, '')
+                .replace(/line-height:[^;]+(;|$)/gi, '')
+                .replace(/margin-top:[^;]+(;|$)/gi, '')
+                .replace(/margin-bottom:[^;]+(;|$)/gi, '');
+            });
+
+          setContentHtml(cleanedHtml);
+          setLastSaved('Đã đồng bộ');
         }
       } catch {
-        if (isMounted) setContent("");
+        const defaultContent = `
+          <div style="font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.6;">
+            <h3 style="text-align: center; font-weight: bold; margin-bottom: 15px; text-transform: uppercase;">${docTitle}</h3>
+            <p><b>Mã tài liệu:</b> ${docCode}</p>
+            <hr style="margin: 15px 0; border: 0; border-top: 1px solid #e1dfdd;" />
+            <p><b>1. Mục đích:</b></p>
+            <p style="padding-left: 20px; color: #605e5c;">[Nhập mục đích áp dụng của tài liệu tại đây...]</p>
+            <p><b>2. Nội dung chi tiết:</b></p>
+            <p style="padding-left: 20px; color: #605e5c;">[Nhập nội dung chi tiết hoặc dán dữ liệu biểu mẫu tại đây...]</p>
+          </div>
+        `;
+        if (isMounted) {
+          setContentHtml(defaultContent);
+          setLastSaved('Đang ở chế độ soạn thảo');
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
     };
 
-    loadDocument();
+    fetchContent();
 
     return () => {
       isMounted = false;
     };
-  }, [selectedFile]);
+  }, [pdfPath, storageKey, docCode, docTitle, isPdf]);
 
-  const execCommand = (command: string, value: string = "") => {
-    document.execCommand(command, false, value);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const cells = containerRef.current.querySelectorAll('td, th');
+    cells.forEach((cell) => {
+      const htmlCell = cell as HTMLElement;
+      if (htmlCell.getAttribute('contenteditable') !== 'true') {
+        htmlCell.setAttribute('contenteditable', 'true');
+        htmlCell.style.outline = 'none';
+      }
+    });
+  }, [contentHtml]);
+
+  const handleBlur = () => {
+    if (!containerRef.current) return;
+
+    const cells = containerRef.current.querySelectorAll('td, th');
+    cells.forEach((cell) => cell.removeAttribute('contenteditable'));
+
+    const html = containerRef.current.innerHTML;
+
+    cells.forEach((cell) => cell.setAttribute('contenteditable', 'true'));
+
+    localStorage.setItem(storageKey, html);
+    const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setLastSaved(`Đã lưu lúc ${timeStr}`);
   };
 
-  if (!selectedFile) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm bg-gray-50">
-        Vui lòng chọn tài liệu hoặc biểu mẫu từ danh mục bên trái
-      </div>
-    );
-  }
+  const handleReset = () => {
+    if (confirm('Bạn có chắc chắn muốn khôi phục lại nội dung gốc từ file Word?')) {
+      localStorage.removeItem(storageKey);
+      window.location.reload();
+    }
+  };
 
   return (
-    <div className="flex-1 flex flex-col h-screen bg-gray-100 overflow-hidden">
-      {/* Header thanh công cụ MS Word */}
-      <div className="bg-white border-b px-4 py-2 shadow-sm flex flex-wrap items-center gap-2">
-        <h1 className="font-bold text-gray-800 text-sm mr-4 border-r pr-4">
-          {selectedFile.title}
-        </h1>
-
-        {selectedFile.type === "docx" && (
-          <div className="flex items-center gap-1 bg-gray-50 p-1 rounded border text-xs">
-            <button
-              onClick={() => execCommand("bold")}
-              className="px-2 py-1 font-bold hover:bg-gray-200 rounded"
-              title="In đậm"
-            >
-              B
-            </button>
-            <button
-              onClick={() => execCommand("italic")}
-              className="px-2 py-1 italic hover:bg-gray-200 rounded"
-              title="In nghiêng"
-            >
-              I
-            </button>
-            <button
-              onClick={() => execCommand("underline")}
-              className="px-2 py-1 underline hover:bg-gray-200 rounded"
-              title="Gạch chân"
-            >
-              U
-            </button>
-            <span className="border-r h-4 my-auto mx-1"></span>
-            <button
-              onClick={() => execCommand("justifyLeft")}
-              className="px-2 py-1 hover:bg-gray-200 rounded"
-            >
-              Left
-            </button>
-            <button
-              onClick={() => execCommand("justifyCenter")}
-              className="px-2 py-1 hover:bg-gray-200 rounded"
-            >
-              Center
-            </button>
-            <button
-              onClick={() => execCommand("justifyRight")}
-              className="px-2 py-1 hover:bg-gray-200 rounded"
-            >
-              Right
-            </button>
-            <span className="border-r h-4 my-auto mx-1"></span>
-            <button
-              onClick={() => window.print()}
-              className="px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
-            >
-              🖨️ In / Export PDF
-            </button>
+    <div className="flex-1 bg-[#f3f2f1] p-5 flex flex-col h-full overflow-hidden font-['Times_New_Roman',Times,serif]">
+      <div className="mb-4 bg-white border border-[#edebe9] rounded-lg shadow-sm px-4 py-3 flex items-center justify-between shrink-0 font-sans">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded bg-[#107c41] flex items-center justify-center text-white shadow-sm shrink-0">
+            <FileText className="w-5 h-5" />
           </div>
-        )}
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-semibold text-[#201f1e] max-w-sm truncate">{docTitle}</h2>
+              <span className="text-[10px] font-mono bg-[#f3f2f1] text-[#605e5c] px-1.5 py-0.5 rounded border border-[#edebe9]">{docCode}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-[#107c41] font-medium mt-0.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{lastSaved}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isWord && (
+            <div className="flex bg-[#f3f2f1] p-0.5 rounded-md border border-[#edebe9] mr-2">
+              <button
+                onClick={() => setViewMode('edit')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-all ${viewMode === 'edit' ? 'bg-white text-[#107c41] shadow-xs font-semibold' : 'text-[#605e5c] hover:text-[#201f1e]'}`}
+              >
+                <Edit3 className="w-3.5 h-3.5" /> Soạn thảo
+              </button>
+              <button
+                onClick={() => setViewMode('preview')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-all ${viewMode === 'preview' ? 'bg-white text-[#107c41] shadow-xs font-semibold' : 'text-[#605e5c] hover:text-[#201f1e]'}`}
+              >
+                <Eye className="w-3.5 h-3.5" /> Xem trước
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={handleReset}
+            title="Làm mới nội dung"
+            className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-[#f3f2f1] text-[#323130] rounded border border-[#8a8886]/40 text-xs font-medium transition-colors shadow-2xs"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-[#605e5c]" /> Khôi phục
+          </button>
+
+          {pdfPath && (
+            <a
+              href={encodeURI(pdfPath)}
+              download
+              className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-[#f3f2f1] text-[#323130] rounded border border-[#8a8886]/40 text-xs font-medium transition-colors shadow-2xs"
+            >
+              <Download className="w-3.5 h-3.5 text-[#605e5c]" /> Tải gốc
+            </a>
+          )}
+
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-[#107c41] hover:bg-[#0b5a2f] text-white rounded text-xs font-medium transition-colors shadow-xs"
+          >
+            <Printer className="w-3.5 h-3.5" /> In / Xuất PDF
+          </button>
+        </div>
       </div>
 
-      {/* Vùng xem/chỉnh sửa tài liệu */}
-      <div className="flex-1 overflow-y-auto p-6 flex justify-center">
-        {loading ? (
-          <div className="text-gray-500 text-sm my-auto">Đang tải nội dung...</div>
-        ) : selectedFile.type === "pdf" ? (
-          <iframe
-            src={`/docs/${selectedFile.fileName}`}
-            className="w-full h-full border rounded-lg shadow bg-white"
-            title="PDF Viewer"
-          />
+      <div className="flex-1 bg-[#edebe9] rounded-lg border border-[#d2d0ce] shadow-inner overflow-hidden flex flex-col">
+        {isPdf ? (
+          <iframe src={`${encodeURI(pdfPath || '')}#toolbar=1`} className="w-full h-full border-none" title={docTitle} />
+        ) : isWord && viewMode === 'preview' ? (
+          <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-white m-6 rounded-lg shadow-sm border border-[#edebe9]">
+            <FileText className="w-16 h-16 text-[#107c41] mb-3" />
+            <h3 className="text-base font-semibold text-[#201f1e] mb-1">{docTitle}</h3>
+            <p className="text-xs text-[#605e5c] mb-6 max-w-md">File Word đang ở chế độ xem nhanh. Chuyển sang thẻ &ldquo;Soạn thảo&rdquo; để điền thông tin trực tiếp vào bảng.</p>
+            {pdfPath && (
+              <a
+                href={encodeURI(pdfPath)}
+                download
+                className="flex items-center gap-2 px-5 py-2 bg-[#107c41] hover:bg-[#0b5a2f] text-white rounded text-xs font-semibold shadow-sm transition-colors"
+              >
+                <Download className="w-4 h-4" /> Tải xuống file Word
+              </a>
+            )}
+          </div>
+        ) : loading ? (
+          <div className="flex items-center justify-center h-full gap-2 text-xs text-[#605e5c] bg-white">
+            <Loader2 className="w-5 h-5 animate-spin text-[#107c41]" />
+            <span>Đang tải biểu mẫu từ hệ thống...</span>
+          </div>
         ) : (
-          <div
-            contentEditable
-            suppressContentEditableWarning
-            className="w-[210mm] min-h-[297mm] bg-white p-[25mm] shadow-lg border outline-none text-gray-800 text-sm leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: content }}
-          />
+          <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-[#f3f2f1]">
+            {/* Thu nhỏ lề trang giấy từ 20mm xuống 15mm và thu gọn khoảng cách header */}
+            <div className="w-[210mm] min-h-[297mm] bg-white border border-[#c8c6c4] shadow-md p-[15mm] rounded-xs text-[#201f1e] relative">
+              
+              {/* Phần tiêu đề chuẩn bệnh viện gọn gàng, chống bị đẩy nội dung */}
+              <div className="flex items-center justify-between border-b-2 border-slate-800 pb-2 mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="shrink-0">
+                    <Image 
+                      src="/hospital-logo.png" 
+                      alt="Logo Bệnh viện" 
+                      width={40} 
+                      height={40} 
+                      className="object-contain w-10 h-10"
+                    />
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 m-0">BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA</h4>
+                    <p className="text-[10px] text-slate-600 m-0">QUẢN LÝ CHẤT LƯỢNG KHOA VI SINH - MIỄN DỊCH</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[11px] font-bold text-rose-700 font-mono bg-rose-50 px-2 py-0.5 rounded border border-rose-200">{docCode}</span>
+                </div>
+              </div>
+
+              <div className="text-[10px] text-[#107c41] font-semibold mb-3 pb-1 border-b border-[#edebe9] flex justify-between items-center uppercase tracking-wide font-sans">
+                <span>Microsoft Word Online - Nhấp vào các ô trong bảng để nhập dữ liệu</span>
+                <span className="text-[#8a8886] font-mono">{docCode}</span>
+              </div>
+
+              <div
+  ref={containerRef}
+  onBlur={handleBlur}
+  dangerouslySetInnerHTML={{ __html: contentHtml }}
+  className="outline-none w-full text-[#201f1e] bg-white font-['Times_New_Roman',Times,serif] 
+    user-select-text 
+    flex flex-col items-center /* Căn giữa nội dung */
+
+    /* Định dạng bảng - Ép buộc nằm trong trang và thu gọn tối đa */
+    [&_table]:w-full 
+    [&_table]:border-collapse 
+    [&_table]:table-fixed /* QUAN TRỌNG: Ép buộc chia đều cột */
+    [&_table]:my-0.5 
+    [&_table]:mx-auto 
+    [&_table]:max-w-full
+    [&_table]:leading-none /* Giảm chiều cao dòng */
+    
+    /* Định dạng ô - Thu nhỏ padding và kích thước chữ */
+    [&_td]:border 
+    [&_td]:border-[#323130] 
+    [&_td]:py-0.5 /* Padding dọc cực nhỏ */
+    [&_td]:px-1 /* Padding ngang cực nhỏ */
+    [&_td]:align-middle 
+    [&_td]:text-[10px] /* Cỡ chữ rất nhỏ để vừa trang */
+    [&_td]:overflow-hidden 
+    [&_td]:text-ellipsis 
+    [&_td]:whitespace-nowrap /* Ngăn xuống dòng làm cao hàng */
+    [&_td]:focus:bg-[#eff6fc] 
+    [&_td]:focus:outline-2 
+    [&_td]:focus:outline-[#0078d4] 
+    [&_td]:cursor-text
+    
+    /* Định dạng tiêu đề */
+    [&_th]:border 
+    [&_th]:border-[#323130] 
+    [&_th]:py-0.5 
+    [&_th]:px-1 
+    [&_th]:bg-[#f3f2f1] 
+    [&_th]:text-center 
+    [&_th]:font-bold 
+    [&_th]:text-[10px]
+    [&_th]:whitespace-nowrap
+
+    /* Định dạng đoạn văn */
+    [&_p]:my-0
+    [&_p]:leading-none"
+/>
+            </div>
+          </div>
         )}
       </div>
     </div>
   );
-}
+};
