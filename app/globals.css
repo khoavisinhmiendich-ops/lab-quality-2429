@@ -27,3 +27,17 @@
     margin: 0;
   }
 }
+/* Khôi phục đường kẻ ô cho bảng Word */
+.prose table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin-top: 1rem !important;
+  margin-bottom: 1rem !important;
+}
+
+.prose td,
+.prose th {
+  border: 1px solid #000000 !important;
+  padding: 6px 8px !important;
+  vertical-align: middle !important;
+}

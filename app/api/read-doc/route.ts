@@ -1,77 +1,77 @@
-import { NextResponse } from "next/server";
-import mammoth from "mammoth";
-import fs from "fs";
-import path from "path";
+import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs';
+import path from 'path';
 
-export async function GET(request: Request) {
+// Hàm đệ quy quét và tìm file trong thư mục public nếu truyền thiếu path
+function findFileRecursive(dir: string, targetFileName: string): string | null {
+  if (!fs.existsSync(dir)) return null;
+
+  const items = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const item of items) {
+    const fullPath = path.join(dir, item.name);
+    if (item.isDirectory()) {
+      const found = findFileRecursive(fullPath, targetFileName);
+      if (found) return found;
+    } else if (item.name.toLowerCase() === targetFileName.toLowerCase()) {
+      return fullPath;
+    }
+  }
+
+  return null;
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const filePathParam = searchParams.get('file');
+
+  if (!filePathParam) {
+    return NextResponse.json({ error: 'Missing file parameter' }, { status: 400 });
+  }
+
+  // 1. Giải mã URL (xử lý %20, dấu tiếng Việt) và xóa dấu / ở đầu
+  const decodedPath = decodeURIComponent(filePathParam).replace(/^[/\\]+/, '');
+  const publicDir = path.join(process.cwd(), 'public');
+
+  // 2. Thử đường dẫn trực tiếp (Ví dụ: public/2429.2026/1. Chuong I.../file.docx)
+  let absolutePath = path.join(publicDir, decodedPath);
+
+  // 3. Nếu không tìm thấy, tự động quét toàn bộ thư mục public để tìm tên file
+  if (!fs.existsSync(absolutePath)) {
+    const fileNameOnly = path.basename(decodedPath);
+    const foundPath = findFileRecursive(publicDir, fileNameOnly);
+
+    if (foundPath) {
+      absolutePath = foundPath;
+    } else {
+      console.error(`[read-doc API] File not found: ${absolutePath}`);
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const docPath = searchParams.get("path");
+    const fileBuffer = fs.readFileSync(absolutePath);
+    const ext = path.extname(absolutePath).toLowerCase();
 
-    if (!docPath) {
-      return NextResponse.json({ error: "Missing path parameter" }, { status: 400 });
+    // Xác định Header loại file
+    let contentType = 'application/octet-stream';
+    if (ext === '.docx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    } else if (ext === '.pdf') {
+      contentType = 'application/pdf';
+    } else if (ext === '.xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
 
-    // Xác định đường dẫn file trong thư mục public
-    const filePath = path.join(process.cwd(), "public", docPath);
-
-    if (!fs.existsSync(filePath)) {
-      return NextResponse.json({ error: "File not found" }, { status: 404 });
-    }
-
-    // Đọc file từ ổ đĩa
-    const buffer = fs.readFileSync(filePath);
-    
-    // Chuyển đổi Buffer sang ArrayBuffer chuẩn cho Mammoth
-    const arrayBuffer = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    );
-
-    // Chuyển đổi file Word (.docx) sang HTML
-    const result = await mammoth.convertToHtml({ arrayBuffer });
-    let html = result.value;
-
-    // ⚡ XỬ LÝ TRIỆT ĐỂ 100%: Xóa bỏ toàn bộ thuộc tính gây xô lệch lề bảng A4
-    html = html
-      // 1. Xóa toàn bộ thẻ <col> quy định chiều rộng cột cố định
-      .replace(/<col[^>]*>/gi, "")
-      // 2. Xóa các thuộc tính width và height trực tiếp trên các thẻ HTML
-      .replace(/\s*width="[^"]*"/gi, "")
-      .replace(/\s*height="[^"]*"/gi, "")
-      // 3. Làm sạch thuộc tính style="..." inline
-      .replace(/style="([^"]*)"/gi, (_, styleContent: string) => {
-        const cleanedStyle = styleContent
-          .split(";")
-          .filter((rule: string) => {
-            const prop = rule.split(":")[0]?.trim().toLowerCase();
-            // Loại bỏ các thuộc tính định dạng kích thước & lề bị sai lệch của Word
-            return ![
-              "width",
-              "min-width",
-              "max-width",
-              "height",
-              "min-height",
-              "max-height",
-              "margin",
-              "margin-left",
-              "margin-right",
-              "margin-top",
-              "margin-bottom",
-              "text-indent",
-              "white-space",
-            ].includes(prop);
-          })
-          .join(";");
-        return cleanedStyle ? `style="${cleanedStyle}"` : "";
-      });
-
-    return NextResponse.json({ html });
+    return new NextResponse(fileBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Disposition': `inline; filename="${encodeURIComponent(path.basename(absolutePath))}"`,
+      },
+    });
   } catch (error) {
-    console.error("Read doc error:", error);
-    return NextResponse.json(
-      { error: "Error reading document from server" },
-      { status: 500 }
-    );
+    console.error('[read-doc API] Error reading file:', error);
+    return NextResponse.json({ error: 'Error reading file' }, { status: 500 });
   }
 }

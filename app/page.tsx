@@ -1,187 +1,242 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
-import  EditableForm from '@/components/EditableForm';
-import { Folder, FileText, ChevronRight, ChevronDown, ShieldCheck, Loader2, Search } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import FolderTree, { DocumentNode } from '@/components/FolderTree';
 
-interface DocNode {
-  id: string;
-  title: string;
-  isFolder: boolean;
-  path?: string;
-  code?: string;
-  children?: DocNode[];
-}
+export default function HomePage() {
+  const [selectedFile, setSelectedFile] = useState<DocumentNode | null>(null);
+  const [htmlContent, setHtmlContent] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSaved, setIsSaved] = useState<boolean>(true);
+  const editorRef = useRef<HTMLDivElement>(null);
 
-export default function Home() {
-  const [treeData, setTreeData] = useState<DocNode[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
-  const [selectedDoc, setSelectedDoc] = useState<{ code: string; title: string; path: string } | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-
-  useEffect(() => {
-    fetch('/api/docs')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.tree) {
-          setTreeData(data.tree);
-
-          // Tự động mở tất cả thư mục cấp 1 & cấp 2 (12 Chương & Thư mục con)
-          const initialOpen: Record<string, boolean> = {};
-          const openAllFolders = (nodes: DocNode[]) => {
-            nodes.forEach((node) => {
-              if (node.isFolder) {
-                initialOpen[node.id] = true;
-                if (node.children) openAllFolders(node.children);
-              }
-            });
-          };
-          openAllFolders(data.tree);
-          setOpenNodes(initialOpen);
-
-          // Chọn file đầu tiên tìm thấy làm mặc định
-          const findFirstFile = (nodes: DocNode[]): DocNode | null => {
-            for (const n of nodes) {
-              if (!n.isFolder && n.path) return n;
-              if (n.children) {
-                const found = findFirstFile(n.children);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
-
-          const firstFile = findFirstFile(data.tree);
-          if (firstFile) {
-            setSelectedDoc({
-              code: firstFile.code || '2429',
-              title: firstFile.title,
-              path: firstFile.path!,
-            });
-          }
-        }
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const toggleNode = (id: string) => {
-    setOpenNodes((prev) => ({ ...prev, [id]: !prev[id] }));
+  // Xác định định dạng file
+  const getFileType = (file: DocumentNode) => {
+    if (file.type === 'pdf' || file.path?.toLowerCase().endsWith('.pdf')) {
+      return 'pdf';
+    }
+    if (
+      file.type === 'doc' ||
+      file.type === 'docx' ||
+      file.path?.toLowerCase().endsWith('.doc') ||
+      file.path?.toLowerCase().endsWith('.docx')
+    ) {
+      return 'word';
+    }
+    return file.type || 'text';
   };
 
-  // Render cây thư mục đệ quy đa cấp
-  const renderTree = (nodes: DocNode[]) => {
-    return nodes.map((node) => {
-      // Lọc theo từ khóa tìm kiếm nếu có
-      if (searchQuery.trim() !== '') {
-        const matchesSearch = node.title.toLowerCase().includes(searchQuery.toLowerCase());
-        if (!node.isFolder && !matchesSearch) return null;
+  // Load và chuyển đổi nội dung file
+  useEffect(() => {
+    if (!selectedFile) return;
+
+    const fileType = getFileType(selectedFile);
+    if (fileType !== 'word' || !selectedFile.path) return;
+
+    let isSubscribed = true;
+    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
+
+    const loadDocument = async () => {
+      // 1. Kiểm tra LocalStorage
+      const savedData = localStorage.getItem(storageKey);
+
+      if (savedData) {
+        if (isSubscribed) {
+          setHtmlContent(savedData);
+          setIsLoading(false);
+          setIsSaved(true);
+        }
+        return;
       }
 
-      if (node.isFolder) {
-        const isOpen = !!openNodes[node.id];
-        const hasChildren = node.children && node.children.length > 0;
+      // 2. Tải và convert file Word sang HTML
+      if (isSubscribed) {
+        setIsLoading(true);
+      }
 
-        if (!hasChildren) return null;
+      try {
+        const res = await fetch(selectedFile.path!);
+        if (!res.ok) throw new Error('Không thể tải file');
 
-        return (
-          <div key={node.id} className="space-y-0.5">
-            <button
-              onClick={() => toggleNode(node.id)}
-              className="w-full flex items-center gap-1.5 p-1.5 rounded hover:bg-slate-100 text-xs font-bold text-slate-800 transition-all text-left"
-            >
-              {isOpen ? (
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        const arrayBuffer = await res.arrayBuffer();
+        const mammoth = await import('mammoth');
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+
+        if (isSubscribed) {
+          setHtmlContent(result.value);
+          setIsSaved(true);
+        }
+      } catch (err) {
+        console.error('Lỗi chuyển đổi file Word:', err);
+        if (isSubscribed) {
+          setHtmlContent('<p style="color: red;">Không thể tải nội dung biểu mẫu.</p>');
+        }
+      } finally {
+        if (isSubscribed) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadDocument();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [selectedFile]);
+
+  // Tự động lưu vào LocalStorage khi chỉnh sửa/nhập liệu
+  const handleInput = () => {
+    if (!selectedFile || !editorRef.current) return;
+    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
+    const newContent = editorRef.current.innerHTML;
+    localStorage.setItem(storageKey, newContent);
+    setIsSaved(true);
+  };
+
+  // Nút khôi phục biểu mẫu gốc
+  const handleReset = async () => {
+    if (!selectedFile || !selectedFile.path) return;
+    const storageKey = `form_data_${selectedFile.path || selectedFile.id || selectedFile.title}`;
+    localStorage.removeItem(storageKey);
+
+    setIsLoading(true);
+    try {
+      const res = await fetch(selectedFile.path);
+      const arrayBuffer = await res.arrayBuffer();
+      const mammoth = await import('mammoth');
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      setHtmlContent(result.value);
+      if (editorRef.current) {
+        editorRef.current.innerHTML = result.value;
+      }
+    } catch (err) {
+      console.error('Lỗi khôi phục mẫu:', err);
+    } finally {
+      setIsLoading(false);
+      setIsSaved(true);
+    }
+  };
+
+  // Nút In / Trích xuất PDF
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const renderContent = () => {
+    if (!selectedFile) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-slate-400">
+          <span className="text-5xl mb-3">📄</span>
+          <p className="text-sm font-medium">Chọn một tài liệu hoặc biểu mẫu bên danh mục để xem nội dung</p>
+        </div>
+      );
+    }
+
+    const fileType = getFileType(selectedFile);
+
+    // 1. Dạng Tra cứu Internet (Text)
+    if (fileType === 'text' || selectedFile.content) {
+      return (
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs max-w-4xl mx-auto my-4 overflow-y-auto max-h-full">
+          <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
+            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-semibold text-xs rounded-full border border-blue-200">
+              🌐 Tra cứu Internet
+            </span>
+          </div>
+          <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed whitespace-pre-line text-sm">
+            {selectedFile.content}
+          </div>
+        </div>
+      );
+    }
+
+    // 2. Dạng PDF
+    if (fileType === 'pdf' && selectedFile.path) {
+      return (
+        <iframe
+          src={`${selectedFile.path}#toolbar=1`}
+          className="w-full h-full border-0 rounded-lg shadow-inner"
+          title={selectedFile.title}
+        />
+      );
+    }
+
+    // 3. Dạng Word/Biểu mẫu -> Khung A4 co giãn tự do
+    if (fileType === 'word') {
+      return (
+        <div className="flex flex-col h-full bg-slate-100 overflow-hidden">
+          {/* Thanh công cụ biểu mẫu */}
+          <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between shadow-xs print:hidden shrink-0 z-10">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold px-2.5 py-1 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center gap-1">
+                ✍️ Cho phép điền trực tiếp
+              </span>
+              {isSaved && (
+                <span className="text-xs text-slate-500 flex items-center gap-1">
+                  ✓ Đã tự động lưu
+                </span>
               )}
-              <Folder className="w-4 h-4 text-amber-500 fill-amber-500/20 shrink-0" />
-              <span className="truncate">{node.title}</span>
-            </button>
+            </div>
 
-            {isOpen && node.children && (
-              <div className="ml-3 pl-1.5 border-l border-slate-200 space-y-0.5">
-                {renderTree(node.children)}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleReset}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all cursor-pointer"
+              >
+                🔄 Đặt lại mẫu gốc
+              </button>
+              <button
+                onClick={handlePrint}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+              >
+                🖨️ In / Trích xuất PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Vùng chứa tờ A4 - Cho phép cuộn dọc hoàn toàn khi A4 giãn dài */}
+          <div className="flex-1 overflow-y-auto p-8 flex justify-center bg-slate-200/70">
+            {isLoading ? (
+              <div className="flex items-center gap-2 text-blue-600 font-semibold text-sm self-center">
+                <span className="animate-spin text-lg">⏳</span> Đang chuẩn bị biểu mẫu...
               </div>
+            ) : (
+              <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={() => {
+                  setIsSaved(false);
+                  handleInput();
+                }}
+                dangerouslySetInnerHTML={{ __html: htmlContent }}
+                className="bg-white shadow-2xl border border-slate-300 p-12 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-2 focus:ring-blue-500 rounded-xs mb-12 self-start [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-black [&_td]:p-2 [&_th]:border [&_th]:border-black [&_th]:p-2 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
+                style={{
+                  boxSizing: 'border-box',
+                  wordBreak: 'break-word',
+                }}
+              />
             )}
           </div>
-        );
-      }
-
-      const isSelected = selectedDoc?.path === node.path;
-      return (
-        <button
-          key={node.id}
-          onClick={() =>
-            setSelectedDoc({
-              code: node.code || '2429',
-              title: node.title,
-              path: node.path!,
-            })
-          }
-          className={`w-full text-left p-1.5 rounded text-xs transition-all flex items-center gap-2 ${
-            isSelected
-              ? 'bg-rose-50 text-rose-700 font-semibold border border-rose-200 shadow-sm'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <FileText className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-rose-600' : 'text-slate-400'}`} />
-          <span className="truncate" title={node.title}>{node.title}</span>
-        </button>
+        </div>
       );
-    });
+    }
+
+    return null;
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-slate-100">
-      <Header />
+    <div className="flex h-screen bg-slate-100 overflow-hidden">
+      {/* Cột danh mục bên trái */}
+      <FolderTree onSelectFile={(file) => setSelectedFile(file)} selectedFile={selectedFile} />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar hiển thị trọn bộ cây thư mục */}
-        <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-sm">
-          <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
-            <h3 className="text-xs font-bold uppercase text-slate-800 tracking-wide flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>HỒ SƠ QUẢN LÝ CHẤT LƯỢNG 2429</span>
-            </h3>
-
-            {/* Ô tìm kiếm nhanh biểu mẫu */}
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Tìm tên file, biểu mẫu..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1 text-xs outline-none focus:border-rose-500 transition-all"
-              />
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {loading ? (
-              <div className="flex items-center justify-center p-8 gap-2 text-xs text-slate-400">
-                <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
-                <span>Đang tải toàn bộ 12 chương...</span>
-              </div>
-            ) : (
-              renderTree(treeData)
-            )}
-          </div>
-        </aside>
-
-        {/* Khung xem và điền văn bản */}
-        <main className="flex-1 overflow-hidden bg-slate-100">
-          {selectedDoc ? (
-            <EditableForm docCode={selectedDoc.code} docTitle={selectedDoc.title} pdfPath={selectedDoc.path} />
-          ) : (
-            <div className="flex items-center justify-center h-full text-xs text-slate-400">
-              Vui lòng chọn tài liệu từ danh mục bên trái
-            </div>
-          )}
-        </main>
-      </div>
+      {/* Cột xem và điền biểu mẫu chính bên phải */}
+      <main className="flex-1 h-full p-4 overflow-hidden print:p-0">
+        <div className="h-full bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden flex flex-col print:border-none">
+          {renderContent()}
+        </div>
+      </main>
     </div>
   );
 }
