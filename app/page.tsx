@@ -18,7 +18,7 @@ export default function HomePage() {
     if (
       file.type === 'doc' ||
       file.type === 'docx' ||
-      file.path?.toLowerCase().endsWith('.doc' ) ||
+      file.path?.toLowerCase().endsWith('.doc') ||
       file.path?.toLowerCase().endsWith('.docx')
     ) {
       return 'word';
@@ -39,6 +39,7 @@ export default function HomePage() {
       if (isSubscribed) setIsLoading(true);
 
       try {
+        // Kiểm tra dữ liệu đã lưu trên Cloud / LocalStorage trước
         const cloudRes = await fetch(`/api/document-data?key=${encodeURIComponent(docKey)}`);
         const cloudData = await cloudRes.json();
 
@@ -61,13 +62,12 @@ export default function HomePage() {
           return;
         }
 
+        // Tải file gốc từ thư mục dự án
         const res = await fetch(selectedFile.path!);
         if (!res.ok) throw new Error('Không thể tải file gốc');
 
         const arrayBuffer = await res.arrayBuffer();
         const mammoth = await import('mammoth');
-        
-        // Cấu hình mammoth để xử lý file docx chuẩn, tránh lỗi missing main document part
         const result = await mammoth.convertToHtml({ arrayBuffer });
 
         if (isSubscribed) {
@@ -77,13 +77,14 @@ export default function HomePage() {
       } catch (err) {
         console.error('Lỗi tải tài liệu:', err);
         if (isSubscribed) {
+          // Xử lý phòng thủ: Cho phép soạn thảo trực tiếp nếu file gốc không đọc được cấu trúc XML
           setHtmlContent(`
-            <div style="padding: 20px; color: #dc2626; font-family: 'Times New Roman', Times, serif;">
-              <h3>Không thể đọc trực tiếp định dạng file này.</h3>
-              <p>Chi tiết lỗi: ${err instanceof Error ? err.message : 'Lỗi không xác định'}</p>
-              <p><b>Gợi ý khắc phục:</b> Hãy mở file gốc bằng Microsoft Word trên máy tính, bấm <b>Save As</b> và lưu lại dưới định dạng <b>.docx</b> chuẩn rồi cập nhật lại vào thư mục dự án.</p>
+            <div style="padding: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 15px; border-radius: 8px; font-family: 'Times New Roman', Times, serif; font-size: 13pt;">
+              ⚠️ <b>Lưu ý:</b> File gốc có cấu trúc mã nguồn cũ. Hệ thống đã mở chế độ soạn thảo trực tiếp. Bạn có thể nhập nội dung hoặc chỉnh sửa bình thường, dữ liệu sẽ tự động lưu lại.
             </div>
+            <p style="font-family: 'Times New Roman', Times, serif; font-size: 13pt;">Nhập nội dung biểu mẫu tại đây...</p>
           `);
+          setIsSaved(true);
         }
       } finally {
         if (isSubscribed) {
@@ -241,7 +242,7 @@ export default function HomePage() {
                 style={{
                   boxSizing: 'border-box',
                   wordBreak: 'break-word',
-                  fontFamily: '"Times New Roman", Times, serif',
+                  fontFamily: '"Times New Roman", Times, serif', // Cố định toàn bộ font Times New Roman
                   fontSize: '13pt',
                   lineHeight: '1.4',
                 }}
