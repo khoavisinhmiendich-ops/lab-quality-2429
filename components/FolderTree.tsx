@@ -157,7 +157,7 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
     return list;
   }, [treeData]);
 
-  // Các thao tác thanh công cụ (Tải / In)
+  // Các thao tác thanh công cụ (Tải)
   const handleDownloadWord = () => {
     if (!selectedFile?.path) {
       alert('Vui lòng chọn 1 file biểu mẫu/tài liệu để tải về!');
