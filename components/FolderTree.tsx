@@ -215,31 +215,37 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
       .catch((err) => console.error('Lỗi lấy cây thư mục:', err));
   }, []);
 
-  // Thống kê số lượng Chương, PDF và Biểu mẫu
-  const stats = useMemo(() => {
-    let chapters = 0;
-    let pdfs = 0;
-    let docs = 0;
+// Thống kê số lượng Chương, PDF, Biểu mẫu và Sổ tay
+const stats = useMemo(() => {
+  let pdfs = 0;
+  let docs = 0;
 
-    const countNodes = (nodes: DocumentNode[]) => {
-      nodes.forEach((node) => {
-        if (node.children && node.children.length > 0) {
-          chapters += 1;
-          countNodes(node.children);
+  // Cố định 12 Chương theo QĐ 2429
+  const chapters = 12;
+  // Sổ tay chất lượng
+  const handbooks = 1;
+
+  const countFiles = (nodes: DocumentNode[]) => {
+    nodes.forEach((node) => {
+      if (node.children && node.children.length > 0) {
+        countFiles(node.children);
+      } else {
+        const isPdfFile =
+          node.type === 'pdf' ||
+          node.title.toLowerCase().endsWith('.pdf') ||
+          node.fileName?.toLowerCase().endsWith('.pdf');
+        if (isPdfFile) {
+          pdfs += 1;
         } else {
-          const isPdfFile = node.type === 'pdf' || node.title.toLowerCase().endsWith('.pdf') || node.fileName?.toLowerCase().endsWith('.pdf');
-          if (isPdfFile) {
-            pdfs += 1;
-          } else {
-            docs += 1;
-          }
+          docs += 1;
         }
-      });
-    };
+      }
+    });
+  };
 
-    countNodes(treeData);
-    return { chapters, pdfs, docs };
-  }, [treeData]);
+  countFiles(treeData);
+  return { chapters, pdfs, docs, handbooks };
+}, [treeData]);
 
   // Danh sách tất cả các node phẳng để hỗ trợ tìm kiếm AI
   const allNodesList = useMemo(() => {
@@ -511,7 +517,7 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
           BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA
         </h3>
         <h2 className="font-display text-[13.5px] font-semibold text-[#0E3A41] uppercase tracking-wide mt-0.5">
-          Khoa Vi Sinh - Miễn Dịch
+          Khoa VI SINH - MIỄN DỊCH
         </h2>
       </div>
 
@@ -563,20 +569,25 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
       </div>
 
       {/* Bảng thống kê */}
-      <div className="grid grid-cols-3 gap-1.5 mb-3 p-2.5 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
-        <div className="flex flex-col">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Chương</span>
-          <span className="text-sm font-bold text-amber-700">{stats.chapters}</span>
-        </div>
-        <div className="flex flex-col border-x border-teal-100/80">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">PDF</span>
-          <span className="text-sm font-bold text-rose-600">{stats.pdfs}</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Biểu mẫu</span>
-          <span className="text-sm font-bold text-teal-700">{stats.docs}</span>
-        </div>
-      </div>
+      {/* Bảng thống kê 4 ô */}
+<div className="grid grid-cols-4 gap-1 mb-3 p-2 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
+  <div className="flex flex-col">
+    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Chương</span>
+    <span className="text-xs font-bold text-amber-700">{stats.chapters}</span>
+  </div>
+  <div className="flex flex-col border-l border-teal-100/80">
+    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">PDF</span>
+    <span className="text-xs font-bold text-rose-600">{stats.pdfs}</span>
+  </div>
+  <div className="flex flex-col border-l border-teal-100/80">
+    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Biểu mẫu</span>
+    <span className="text-xs font-bold text-teal-700">{stats.docs}</span>
+  </div>
+  <div className="flex flex-col border-l border-teal-100/80">
+    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Sổ tay</span>
+    <span className="text-xs font-bold text-indigo-600">{stats.handbooks}</span>
+  </div>
+</div>
 
       {/* Ô tìm kiếm danh mục */}
       <div className="mb-3 shrink-0 relative">
