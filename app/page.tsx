@@ -106,8 +106,8 @@ export default function HomePage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Tài khoản mặc định: admin / 123456
-    if (username.trim() === 'admin' && password === '123456') {
+    // Tài khoản mặc định: admin / 654321
+    if (username.trim() === 'admin' && password === '654321') {
       setIsAuthenticated(true);
       setLoginError('');
     } else {
@@ -459,7 +459,10 @@ export default function HomePage() {
                   <Icon.Lock className="relative w-6 h-6 text-teal-700" />
                 </div>
                 <h2 className="font-display text-[21px] font-semibold text-[#0E3A41] tracking-tight leading-snug">
-                  Hệ thống xác thực Pass Key
+                  HỆ THỐNG QUẢN LÝ CHẤT LƯỢNG QĐ-2429/BYT
+                </h2>
+                <h2 className="font-display text-[21px] font-semibold text-[#0E3A41] tracking-tight leading-snug">
+                  KHOA VI SINH - MIỄN DỊCH
                 </h2>
                 <p className="text-[11.5px] text-slate-400 font-medium mt-1.5 font-ui">
                   Bệnh viện Phong &ndash; Da liễu TW Quy Hòa
@@ -511,14 +514,12 @@ export default function HomePage() {
                   type="submit"
                   className="w-full py-3 bg-[#0E3A41] hover:bg-[#0A2C31] text-white rounded-2xl font-bold shadow-lg shadow-teal-950/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 cursor-pointer text-[12.5px] uppercase tracking-wider mt-1"
                 >
-                  Mở khóa truy cập trang web
+                  Mở khóa truy cập trang web 🚀
                 </button>
               </form>
 
               <div className="mt-6 pt-4 border-t border-slate-100 text-center text-[10.5px] text-slate-400 font-medium font-ui">
-                Gợi ý tài khoản nhanh:{' '}
-                <span className="font-bold text-teal-700">admin</span> /{' '}
-                <span className="font-bold text-teal-700">123456</span>
+                <span className="font-bold text-teal-700">© 2026 Khoa Vi sinh - Miễn dịch, Bệnh viện Phong - Da liễu TW Quy Hòa</span> {' '}
               </div>
             </div>
           </div>
