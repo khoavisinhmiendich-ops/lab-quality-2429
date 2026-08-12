@@ -570,7 +570,7 @@ const stats = useMemo(() => {
 
       {/* Bảng thống kê */}
       {/* Bảng thống kê 4 ô */}
-<div className="grid grid-cols-4 gap-1 mb-3 p-2 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
+<div className="grid grid-cols-4 gap-1 mb-3 p-2 .bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
   <div className="flex flex-col">
     <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Chương</span>
     <span className="text-xs font-bold text-amber-700">{stats.chapters}</span>
@@ -623,7 +623,7 @@ const stats = useMemo(() => {
       {/* Nút bật/tắt Trợ Lý AI */}
       <button
         onClick={() => setIsChatOpen(!isChatOpen)}
-        className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
+        className="mt-3 w-full py-2.5 px-3 .bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
       >
         <Icon.Bot className="w-4 h-4" />
         <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429)'}</span>
@@ -632,7 +632,7 @@ const stats = useMemo(() => {
       {/* Khung chat AI Popup */}
       {isChatOpen && (
         <div className="absolute bottom-16 left-4 right-4 bg-white border border-slate-200 rounded-2xl shadow-[0_20px_50px_-16px_rgba(15,50,55,0.35)] z-50 flex flex-col h-96 overflow-hidden animate-slideUpFade origin-bottom">
-          <div className="bg-gradient-to-r from-[#0E3A41] to-teal-700 text-white px-3.5 py-3 flex items-center justify-between text-xs font-bold shrink-0">
+          <div className=".bg-gradient-to-r from-[#0E3A41] to-teal-700 text-white px-3.5 py-3 flex items-center justify-between text-xs font-bold shrink-0">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/15">
                 <Icon.Bot className="w-3.5 h-3.5" />

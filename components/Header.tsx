@@ -67,7 +67,7 @@ export const Header: React.FC = () => {
           backgroundImage: `url('https://images.unsplash.com/photo-1587354246490-7e26e63fdb6f?auto=format&fit=crop&w=1200&q=80')`,
         }}
       />
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-500/40 to-transparent" />
+      <div className="absolute inset-x-0 top-0 h-px .bg-gradient-to-r from-transparent via-teal-500/40 to-transparent" />
 
       <div className="relative flex items-center justify-between z-10 animate-riseIn">
         <div className="flex items-center gap-4">
@@ -84,7 +84,7 @@ export const Header: React.FC = () => {
               />
             </div>
             <div className="w-12 h-12 rounded-full bg-teal-50 border-2 border-white ring-1 ring-teal-200 flex items-center justify-center p-1 shadow-sm">
-              <div className="w-full h-full rounded-full bg-gradient-to-br from-[#0E3A41] to-teal-700 flex items-center justify-center text-white text-[10px] font-bold text-center leading-none tracking-tight">
+              <div className="w-full h-full rounded-full .bg-gradient-to-br from-[#0E3A41] to-teal-700 flex items-center justify-center text-white text-[10px] font-bold text-center leading-none tracking-tight">
                 KVSMD
               </div>
             </div>
@@ -156,7 +156,7 @@ export const Header: React.FC = () => {
           </button>
 
           <div className="group flex items-center gap-2.5 bg-slate-50 hover:bg-slate-100 p-1.5 pr-3 rounded-full border border-slate-200 transition-all duration-200 hover:-translate-y-px cursor-pointer">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#0E3A41] to-teal-700 text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-white">
+            <div className="w-8 h-8 rounded-full .bg-gradient-to-br from-[#0E3A41] to-teal-700 text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-white">
               NV
             </div>
             <div className="text-left">

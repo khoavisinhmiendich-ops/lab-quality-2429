@@ -18,9 +18,22 @@ export default function HomePage() {
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Trạng thái xem file Excel (.xlsx)
+  const [excelSheets, setExcelSheets] = useState<{ name: string; html: string }[]>([]);
+  const [activeSheet, setActiveSheet] = useState<number>(0);
+  const [isExcelLoading, setIsExcelLoading] = useState<boolean>(false);
+
   const getFileType = (file: DocumentNode) => {
     if (file.type === 'pdf' || file.path?.toLowerCase().endsWith('.pdf')) {
       return 'pdf';
+    }
+    if (
+      file.type === 'xlsx' ||
+      file.type === 'xls' ||
+      file.path?.toLowerCase().endsWith('.xlsx') ||
+      file.path?.toLowerCase().endsWith('.xls')
+    ) {
+      return 'excel';
     }
     if (
       file.type === 'doc' ||
@@ -33,6 +46,7 @@ export default function HomePage() {
     return file.type || 'text';
   };
 
+  // Tải & chuyển đổi file Word (.docx) — giữ nguyên logic gốc
   useEffect(() => {
     if (!selectedFile) return;
 
@@ -98,6 +112,61 @@ export default function HomePage() {
     };
 
     loadDocument();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [selectedFile]);
+
+  // Tải & chuyển đổi file Excel (.xlsx) — chỉ xem, không chỉnh sửa
+  useEffect(() => {
+    if (!selectedFile) return;
+
+    const fileType = getFileType(selectedFile);
+    if (fileType !== 'excel' || !selectedFile.path) return;
+
+    let isSubscribed = true;
+
+    const loadExcel = async () => {
+      if (isSubscribed) {
+        setIsExcelLoading(true);
+        setActiveSheet(0);
+        setExcelSheets([]);
+      }
+
+      try {
+        const res = await fetch(selectedFile.path!);
+        if (!res.ok) throw new Error('Không thể tải file gốc');
+
+        const arrayBuffer = await res.arrayBuffer();
+        const XLSX = await import('xlsx');
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+        const sheets = workbook.SheetNames.map((name) => {
+          const worksheet = workbook.Sheets[name];
+          const html = XLSX.utils.sheet_to_html(worksheet, { editable: false });
+          return { name, html };
+        });
+
+        if (isSubscribed) {
+          setExcelSheets(sheets.length > 0 ? sheets : [{ name: 'Sheet1', html: '<p style="padding:16px;">Bảng tính trống.</p>' }]);
+        }
+      } catch (err) {
+        console.error('Lỗi tải bảng tính:', err);
+        if (isSubscribed) {
+          setExcelSheets([
+            {
+              name: 'Lỗi',
+              html: `<div style="padding: 16px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; font-family: 'Times New Roman', Times, serif; font-size: 13pt;">⚠️ <b>Lưu ý:</b> Không thể đọc nội dung file Excel này.</div>`,
+            },
+          ]);
+        }
+      } finally {
+        if (isSubscribed) setIsExcelLoading(false);
+      }
+    };
+
+    loadExcel();
 
     return () => {
       isSubscribed = false;
@@ -212,6 +281,12 @@ export default function HomePage() {
         <path d="M13.2 3.5V8h5" />
       </svg>
     ),
+    Table: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <rect x="4" y="5" width="16" height="14" rx="1.6" />
+        <path d="M4 10h16M4 15h16M10 5v14M15 5v14" />
+      </svg>
+    ),
     Globe: (p: React.SVGProps<SVGSVGElement>) => (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
         <circle cx="12" cy="12" r="8" />
@@ -268,7 +343,7 @@ export default function HomePage() {
         <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-riseIn">
           <div className="relative mb-5">
             <div className="absolute inset-0 rounded-full bg-teal-500/10 blur-xl scale-150" />
-            <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-50 to-teal-100 border border-teal-200/70 flex items-center justify-center shadow-sm">
+            <div className="relative w-16 h-16 rounded-2xl .bg-gradient-to-br from-teal-50 to-teal-100 border border-teal-200/70 flex items-center justify-center shadow-sm">
               <Icon.File className="w-7 h-7 text-teal-600" />
             </div>
           </div>
@@ -280,10 +355,14 @@ export default function HomePage() {
     }
 
     const fileType = getFileType(selectedFile);
+    const contentKey = selectedFile.id || selectedFile.path || selectedFile.title;
 
     if (fileType === 'text' || selectedFile.content) {
       return (
-        <div className="bg-white p-8 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,50,55,0.04),0_12px_28px_-12px_rgba(15,50,55,0.12)] max-w-4xl mx-auto my-6 overflow-y-auto max-h-full animate-riseIn">
+        <div
+          key={contentKey}
+          className="bg-white p-8 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,50,55,0.04),0_12px_28px_-12px_rgba(15,50,55,0.12)] max-w-4xl mx-auto my-6 overflow-y-auto max-h-full animate-riseIn"
+        >
           <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 text-teal-700 font-semibold text-[11px] uppercase tracking-wide rounded-full border border-teal-200/70">
               <Icon.Globe className="w-3.5 h-3.5" />
@@ -303,6 +382,7 @@ export default function HomePage() {
     if (fileType === 'pdf' && selectedFile.path) {
       return (
         <iframe
+          key={contentKey}
           src={`${selectedFile.path}#toolbar=1`}
           className="w-full h-full border-0 rounded-xl shadow-md animate-riseIn"
           title={selectedFile.title}
@@ -310,10 +390,68 @@ export default function HomePage() {
       );
     }
 
+    if (fileType === 'excel') {
+      const activeSheetData = excelSheets[activeSheet];
+      return (
+        <div key={contentKey} className="flex flex-col h-full bg-[#EEF4F3] overflow-hidden animate-riseIn">
+          <div className="bg-white/85 backdrop-blur-md border-b border-slate-200/70 px-6 py-3 flex items-center justify-between gap-4 shadow-sm print:hidden shrink-0 z-10 animate-slideDown">
+            <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 bg-sky-50 text-sky-700 rounded-full border border-sky-200/80 shrink-0">
+                <Icon.Table className="w-3.5 h-3.5" />
+                Bảng tính (chỉ xem)
+              </span>
+
+              {excelSheets.length > 1 && (
+                <div className="flex items-center gap-1 shrink-0">
+                  {excelSheets.map((sheet, idx) => (
+                    <button
+                      key={sheet.name + idx}
+                      onClick={() => setActiveSheet(idx)}
+                      className={`px-3 py-1.5 text-[11.5px] font-semibold rounded-lg transition-all duration-200 cursor-pointer hover:-translate-y-px active:translate-y-0 active:scale-95 ${
+                        activeSheet === idx
+                          ? 'bg-teal-700 text-white shadow-sm shadow-teal-900/20'
+                          : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
+                      }`}
+                    >
+                      {sheet.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={handlePrint}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-white bg-teal-700 hover:bg-teal-600 rounded-xl shadow-sm shadow-teal-900/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer shrink-0"
+            >
+              <Icon.Print className="w-3.5 h-3.5" />
+              In / Trích xuất PDF
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto p-8 flex justify-center">
+            {isExcelLoading ? (
+              <div className="flex items-center gap-2.5 text-teal-700 font-semibold text-[13px] self-center animate-riseIn">
+                <Icon.Spinner className="w-4 h-4 animate-spin" />
+                Đang tải bảng tính...
+              </div>
+            ) : (
+              <div
+                key={activeSheet}
+                className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 rounded-sm p-4 min-w-full w-fit self-start animate-popIn [&_table]:border-collapse [&_table]:w-full [&_td]:border [&_td]:border-slate-300 [&_td]:p-1.5 [&_td]:text-[12px] [&_td]:align-top [&_td]:whitespace-nowrap [&_th]:border [&_th]:border-slate-300 [&_th]:p-1.5 [&_th]:bg-slate-50 [&_th]:text-[12px] [&_th]:font-semibold print:shadow-none print:border-none"
+                style={{ fontFamily: '"Times New Roman", Times, serif' }}
+                dangerouslySetInnerHTML={{ __html: activeSheetData?.html || '' }}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
     if (fileType === 'word') {
       return (
-        <div className="flex flex-col h-full bg-[#EEF4F3] overflow-hidden">
-          <div className="bg-white/85 backdrop-blur-md border-b border-slate-200/70 px-6 py-3 flex items-center justify-between shadow-sm print:hidden shrink-0 z-10">
+        <div key={contentKey} className="flex flex-col h-full bg-[#EEF4F3] overflow-hidden animate-riseIn">
+          <div className="bg-white/85 backdrop-blur-md border-b border-slate-200/70 px-6 py-3 flex items-center justify-between shadow-sm print:hidden shrink-0 z-10 animate-slideDown">
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200/80">
                 <Icon.Pen className="w-3.5 h-3.5" />
@@ -340,14 +478,14 @@ export default function HomePage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleReset}
-                className="group inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 cursor-pointer"
+                className="group inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
               >
                 <Icon.Refresh className="w-3.5 h-3.5 transition-transform duration-500 group-hover:rotate-180" />
                 Đặt lại mẫu gốc
               </button>
               <button
                 onClick={handlePrint}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-white bg-teal-700 hover:bg-teal-600 rounded-xl shadow-sm shadow-teal-900/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-white bg-teal-700 hover:bg-teal-600 rounded-xl shadow-sm shadow-teal-900/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
               >
                 <Icon.Print className="w-3.5 h-3.5" />
                 In / Trích xuất PDF
@@ -357,7 +495,7 @@ export default function HomePage() {
 
           <div className="flex-1 overflow-y-auto p-10 flex justify-center">
             {isLoading ? (
-              <div className="flex items-center gap-2.5 text-teal-700 font-semibold text-[13px] self-center">
+              <div className="flex items-center gap-2.5 text-teal-700 font-semibold text-[13px] self-center animate-riseIn">
                 <Icon.Spinner className="w-4 h-4 animate-spin" />
                 Đang đồng bộ dữ liệu từ Cloud...
               </div>
@@ -368,7 +506,7 @@ export default function HomePage() {
                 suppressContentEditableWarning
                 onInput={handleInput}
                 dangerouslySetInnerHTML={{ __html: htmlContent }}
-                className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm mb-12 self-start transition-shadow duration-300 animate-riseIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
+                className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto w-[210mm] outline-none text-black prose prose-slate max-w-none focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm mb-12 self-start transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
                 style={{
                   boxSizing: 'border-box',
                   wordBreak: 'break-word',
@@ -394,11 +532,26 @@ export default function HomePage() {
         .font-display { font-family: 'Fraunces', 'Times New Roman', serif; }
         .font-ui { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
 
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
         @keyframes riseIn {
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
         }
         .animate-riseIn { animation: riseIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+        @keyframes popIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.985); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .animate-popIn { animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slideDown { animation: slideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
         @keyframes veilFade {
           from { opacity: 0; }
@@ -412,10 +565,21 @@ export default function HomePage() {
         }
         .animate-cardIn { animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
+        @keyframes fieldIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fieldIn { animation: fieldIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
         @keyframes ringSpin {
           to { transform: rotate(360deg); }
         }
         .animate-ringSpin { animation: ringSpin 10s linear infinite; }
+
+        @keyframes ringSpinReverse {
+          to { transform: rotate(-360deg); }
+        }
+        .animate-ringSpinReverse { animation: ringSpinReverse 14s linear infinite; }
 
         @keyframes shakeX {
           10%, 90% { transform: translateX(-1px); }
@@ -426,7 +590,8 @@ export default function HomePage() {
         .animate-shakeX { animation: shakeX 0.5s cubic-bezier(0.36,0.07,0.19,0.97) both; }
 
         @media (prefers-reduced-motion: reduce) {
-          .animate-riseIn, .animate-veilFade, .animate-cardIn, .animate-ringSpin, .animate-shakeX {
+          .animate-riseIn, .animate-popIn, .animate-slideDown, .animate-veilFade,
+          .animate-cardIn, .animate-fieldIn, .animate-ringSpin, .animate-ringSpinReverse, .animate-shakeX {
             animation: none !important;
           }
         }
@@ -455,6 +620,7 @@ export default function HomePage() {
               <div className="text-center mb-7">
                 <div className="relative inline-flex items-center justify-center w-16 h-16 mb-4">
                   <span className="absolute inset-0 rounded-full border border-teal-200 animate-ringSpin" style={{ borderStyle: 'dashed' }} />
+                  <span className="absolute .inset-[3px] rounded-full border border-teal-300/60 animate-ringSpinReverse" style={{ borderStyle: 'dotted' }} />
                   <span className="absolute inset-1.5 rounded-full bg-teal-50" />
                   <Icon.Lock className="relative w-6 h-6 text-teal-700" />
                 </div>
@@ -470,7 +636,7 @@ export default function HomePage() {
               </div>
 
               <form onSubmit={handleLogin} className="space-y-4 font-ui">
-                <div>
+                <div className="animate-fieldIn" style={{ animationDelay: '60ms' }}>
                   <label className="block text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                     Tên đăng nhập
                   </label>
@@ -487,7 +653,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div>
+                <div className="animate-fieldIn" style={{ animationDelay: '140ms' }}>
                   <label className="block text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                     Mật khẩu (Pass Key)
                   </label>
@@ -512,13 +678,14 @@ export default function HomePage() {
 
                 <button
                   type="submit"
-                  className="w-full py-3 bg-[#0E3A41] hover:bg-[#0A2C31] text-white rounded-2xl font-bold shadow-lg shadow-teal-950/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 cursor-pointer text-[12.5px] uppercase tracking-wider mt-1"
+                  className="w-full py-3 bg-[#0E3A41] hover:bg-[#0A2C31] text-white rounded-2xl font-bold shadow-lg shadow-teal-950/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.98] cursor-pointer text-[12.5px] uppercase tracking-wider mt-1 animate-fieldIn"
+                  style={{ animationDelay: '220ms' }}
                 >
                   Mở khóa truy cập trang web 🚀
                 </button>
               </form>
 
-              <div className="mt-6 pt-4 border-t border-slate-100 text-center text-[10.5px] text-slate-400 font-medium font-ui">
+              <div className="mt-6 pt-4 border-t border-slate-100 text-center text-[10.5px] text-slate-400 font-medium font-ui animate-fieldIn" style={{ animationDelay: '280ms' }}>
                 <span className="font-bold text-teal-700">© 2026 Khoa Vi sinh - Miễn dịch, Bệnh viện Phong - Da liễu TW Quy Hòa</span> {' '}
               </div>
             </div>
@@ -538,7 +705,7 @@ export default function HomePage() {
           <div className="flex justify-end mb-2.5 shrink-0">
             <button
               onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/80 rounded-xl font-bold transition-all duration-200 hover:-translate-y-px active:translate-y-0 cursor-pointer text-[12px]"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/80 rounded-xl font-bold transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer text-[12px]"
             >
               <Icon.Logout className="w-3.5 h-3.5" />
               Khóa lại (Đăng xuất)

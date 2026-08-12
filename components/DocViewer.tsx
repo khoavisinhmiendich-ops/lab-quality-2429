@@ -1,163 +1,2714 @@
-'use client';
-
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import mammoth from 'mammoth';
-
-interface DocViewerProps {
-  fileUrl: string | null;
-  filePath: string | null;
+export interface DocumentItem {
+  id: string;
+  title: string;
+  fileName?: string;
+  type?: 'docx' | 'pdf' | 'xlsx' | 'folder' | string;
+  path?: string;
+  children?: DocumentItem[];
 }
 
-export default function DocViewer({ fileUrl, filePath }: DocViewerProps) {
-  const [content, setContent] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
-  const [lastSavedTime, setLastSavedTime] = useState<string>('');
+export type DocumentNode = DocumentItem;
 
-  const editorRef = useRef<HTMLDivElement>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const isPdf = Boolean(fileUrl?.toLowerCase().includes('.pdf'));
-
-  useEffect(() => {
-    if (!fileUrl || isPdf) return;
-
-    let isMounted = true;
-    const timer = setTimeout(() => {
-      setLoading(true);
-      setContent('');
-    }, 0);
-
-    const loadDocxContent = async () => {
-      try {
-        const res = await fetch(fileUrl);
-        const arrayBuffer = await res.arrayBuffer();
-        const result = await mammoth.convertToHtml({ arrayBuffer });
-
-        if (isMounted) {
-          setContent(result.value);
-          setLoading(false);
-          setSaveStatus('saved');
-          setLastSavedTime(
-            new Date().toLocaleTimeString('vi-VN', {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-            })
-          );
-        }
-      } catch (err) {
-        console.error('Lỗi đọc file Word:', err);
-        if (isMounted) {
-          setContent('<p className="text-red-500 font-serif">Không thể đọc nội dung file này.</p>');
-          setLoading(false);
-        }
-      }
-    };
-
-    loadDocxContent();
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [fileUrl, isPdf]);
-
-  const saveToServer = useCallback(
-    async (htmlContent: string) => {
-      if (!filePath) return;
-      setSaveStatus('saving');
-
-      try {
-        const res = await fetch('/api/save-doc', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filePath, htmlContent }),
-        });
-
-        if (res.ok) {
-          setSaveStatus('saved');
-          const now = new Date().toLocaleTimeString('vi-VN', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          });
-          setLastSavedTime(now);
-        } else {
-          setSaveStatus('unsaved');
-        }
-      } catch {
-        setSaveStatus('unsaved');
-      }
-    },
-    [filePath]
-  );
-
-  const handleInput = () => {
-    setSaveStatus('unsaved');
-
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-
-    saveTimeoutRef.current = setTimeout(() => {
-      if (editorRef.current) {
-        saveToServer(editorRef.current.innerHTML);
-      }
-    }, 500);
-  };
-
-  if (!fileUrl) {
-    return (
-      <div className="flex items-center justify-center h-full text-slate-400 font-['Times_New_Roman',serif] text-base">
-        Vui lòng chọn 1 tài liệu ở danh mục bên trái để chỉnh sửa
-      </div>
-    );
-  }
-
-  if (isPdf) {
-    return <iframe src={fileUrl} className="w-full h-full border-0 rounded shadow-md" title="PDF Viewer" />;
-  }
-
-  if (loading) {
-    return <div className="p-6 text-slate-500 font-['Times_New_Roman',serif]">Đang tải tài liệu...</div>;
-  }
-
-  return (
-    <div className="relative max-w-5xl mx-auto my-2 flex flex-col h-[calc(100vh-100px)] transition-all">
-      {/* Trạng thái lưu tự động */}
-      <div className="flex justify-end mb-2 shrink-0">
-        <span className="text-xs font-sans font-semibold px-3 py-1.5 rounded-full border bg-white shadow-sm flex items-center gap-1.5">
-          {saveStatus === 'saving' && (
-            <span className="text-amber-600 flex items-center gap-1">
-              <span className="animate-spin inline-block">⏳</span> Đang tự động lưu...
-            </span>
-          )}
-          {saveStatus === 'saved' && (
-            <span className="text-emerald-600">
-              ✓ Đã lưu tự động thành công {lastSavedTime && `(${lastSavedTime})`}
-            </span>
-          )}
-          {saveStatus === 'unsaved' && <span className="text-rose-500">● Đang nhập...</span>}
-        </span>
-      </div>
-
-      {/* Vùng trang giấy Word Times New Roman chuẩn thẩm mỹ */}
-      <div className="bg-white p-10 md:p-14 shadow-xl rounded-sm border border-slate-300 flex-1 overflow-y-auto overflow-x-auto min-w-0 transition-all">
-        <div
-          ref={editorRef}
-          contentEditable
-          suppressContentEditableWarning
-          onInput={handleInput}
-          className="prose max-w-none text-slate-900 outline-none focus:ring-0 w-full
-            font-['Times_New_Roman',serif] text-[15px] leading-relaxed tracking-normal text-justify
-            [&_p]:my-2 [&_h1]:font-bold [&_h1]:text-2xl [&_h2]:font-bold [&_h2]:text-xl [&_h3]:font-bold [&_h3]:text-lg
-            [&_table]:border-collapse [&_table]:w-max [&_table]:min-w-full [&_table]:my-4 [&_table]:shadow-sm
-            [&_td]:border [&_td]:border-slate-800 [&_td]:p-2 [&_td]:text-center [&_td]:min-w-11.25 [&_td]:text-sm
-            [&_th]:border [&_th]:border-slate-800 [&_th]:p-2 [&_th]:font-bold [&_th]:text-center [&_th]:bg-slate-50 [&_th]:text-sm"
-          dangerouslySetInnerHTML={{ __html: content }}
-        />
-      </div>
-    </div>
-  );
-}
+/**
+ * Cây tài liệu ISO 15189 - Mã hồ sơ 2429.2026
+ * Được tạo tự động từ cấu trúc thư mục thực tế (chỉ bao gồm các file .docx, .pdf, .xlsx).
+ * Đường dẫn "path" là đường dẫn tương đối tính từ thư mục /public trên server,
+ * dùng làm tham số "file" khi gọi API /api/read-doc?file=<path>.
+ */
+export const documentsData: DocumentItem[] = [
+  {
+    id: 'c1',
+    title: '1. Chương I Tổ chức quản lý',
+    type: 'folder',
+    children: [
+      {
+        id: 'c1-1',
+        title: '5.1.1 Tổ chức và trách nhiệm quản lý',
+        type: 'folder',
+        children: [
+          {
+            id: 'c1-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c1-1-1-1',
+                title: 'XN-BM 5.1.1.01 So do to chuc',
+                fileName: 'XN-BM 5.1.1.01 So do to chuc.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.01 So do to chuc.docx',
+              },
+              {
+                id: 'c1-1-1-2',
+                title: 'XN-BM 5.1.1.01 So do to chuc',
+                fileName: 'XN-BM 5.1.1.01 So do to chuc.pdf',
+                type: 'pdf',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.01 So do to chuc.pdf',
+              },
+              {
+                id: 'c1-1-1-3',
+                title: 'XN-BM 5.1.1.02 Tham quyen ky',
+                fileName: 'XN-BM 5.1.1.02 Tham quyen ky.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.02 Tham quyen ky.docx',
+              },
+              {
+                id: 'c1-1-1-4',
+                title: 'XN-BM 5.1.1.02 Tham quyen ky',
+                fileName: 'XN-BM 5.1.1.02 Tham quyen ky.pdf',
+                type: 'pdf',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.02 Tham quyen ky.pdf',
+              },
+              {
+                id: 'c1-1-1-5',
+                title: 'XN-BM 5.1.1.03 Ban dang ky chu ky',
+                fileName: 'XN-BM 5.1.1.03 Ban dang ky chu ky.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.03 Ban dang ky chu ky.docx',
+              },
+              {
+                id: 'c1-1-1-6',
+                title: 'XN-BM 5.1.1.04 Cam ket bao mat',
+                fileName: 'XN-BM 5.1.1.04 Cam ket bao mat.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.04 Cam ket bao mat.docx',
+              },
+              {
+                id: 'c1-1-1-7',
+                title: 'XN-BM 5.1.1.04 Cam ket bao mat',
+                fileName: 'XN-BM 5.1.1.04 Cam ket bao mat.pdf',
+                type: 'pdf',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.04 Cam ket bao mat.pdf',
+              },
+              {
+                id: 'c1-1-1-8',
+                title: 'XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat',
+                fileName: 'XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat.docx',
+              },
+              {
+                id: 'c1-1-1-9',
+                title: 'XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat',
+                fileName: 'XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat.pdf',
+                type: 'pdf',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.05 Ke hoach chat luong va ket qua giam sat.pdf',
+              },
+              {
+                id: 'c1-1-1-10',
+                title: 'XN-BM 5.1.1.06 Biên bản họp nhân viên',
+                fileName: 'XN-BM 5.1.1.06 Biên bản họp nhân viên.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.06 Biên bản họp nhân viên.docx',
+              },
+              {
+                id: 'c1-1-1-11',
+                title: 'XN-BM 5.1.1.07 Sổ phân công công việc',
+                fileName: 'XN-BM 5.1.1.07 Sổ phân công công việc.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.1.07 Sổ phân công công việc.docx',
+              },
+            ],
+          },
+          {
+            id: 'c1-1-2',
+            title: 'QDXN 01 De an vi tri viec lam',
+            fileName: 'QDXN 01 De an vi tri viec lam.pdf',
+            type: 'pdf',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/QDXN 01 De an vi tri viec lam.pdf',
+          },
+          {
+            id: 'c1-1-3',
+            title: 'QDXN 02 Cam ket dao duc nghe nghiep',
+            fileName: 'QDXN 02 Cam ket dao duc nghe nghiep.pdf',
+            type: 'pdf',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/QDXN 02 Cam ket dao duc nghe nghiep.pdf',
+          },
+          {
+            id: 'c1-1-4',
+            title: 'QĐXN 01 Đề án vị trí việc làm',
+            fileName: 'QĐXN 01 Đề án vị trí việc làm.docx',
+            type: 'docx',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/QĐXN 01 Đề án vị trí việc làm.docx',
+          },
+          {
+            id: 'c1-1-5',
+            title: 'QĐXN 02 Cam kết đạo đức nghề nghiệp',
+            fileName: 'QĐXN 02 Cam kết đạo đức nghề nghiệp.docx',
+            type: 'docx',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/QĐXN 02 Cam kết đạo đức nghề nghiệp.docx',
+          },
+          {
+            id: 'c1-1-6',
+            title: 'XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly',
+            fileName: 'XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly.docx',
+            type: 'docx',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly.docx',
+          },
+          {
+            id: 'c1-1-7',
+            title: 'XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly',
+            fileName: 'XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly.pdf',
+            type: 'pdf',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.1 Tổ chức và trách nhiệm quản lý/XN-QTQL 5.1.1 Quy trinh to chuc va trach nhiem quan ly.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c1-2',
+        title: '5.1.2 Chỉ số chất lượng',
+        type: 'folder',
+        children: [
+          {
+            id: 'c1-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c1-2-1-1',
+                title: 'Chỉ số chất lượng 1. Hạn chế tỉ lệ loại bỏ mẫu',
+                fileName: 'Chỉ số chất lượng 1. Hạn chế tỉ lệ loại bỏ mẫu.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/Chỉ số chất lượng 1. Hạn chế tỉ lệ loại bỏ mẫu.docx',
+              },
+              {
+                id: 'c1-2-1-2',
+                title: 'Chỉ số chất lượng 2. Kết quả ngoại kiểm Đạt',
+                fileName: 'Chỉ số chất lượng 2. Kết quả ngoại kiểm Đạt.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/Chỉ số chất lượng 2. Kết quả ngoại kiểm Đạt.docx',
+              },
+              {
+                id: 'c1-2-1-3',
+                title: 'Chỉ số chất lượng 3. Khảo sát sự hài lòng khách hàng.',
+                fileName: 'Chỉ số chất lượng 3. Khảo sát sự hài lòng khách hàng..docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/Chỉ số chất lượng 3. Khảo sát sự hài lòng khách hàng..docx',
+              },
+              {
+                id: 'c1-2-1-4',
+                title: 'XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong',
+                fileName: 'XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong.docx',
+              },
+              {
+                id: 'c1-2-1-5',
+                title: 'XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong',
+                fileName: 'XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong.pdf',
+                type: 'pdf',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.2.01 Ke hoach theo doi chi so chat luong.pdf',
+              },
+              {
+                id: 'c1-2-1-6',
+                title: 'XN-BM 5.1.2.02 Phiếu báo cáo chỉ số chất lượng',
+                fileName: 'XN-BM 5.1.2.02 Phiếu báo cáo chỉ số chất lượng.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.2.02 Phiếu báo cáo chỉ số chất lượng.docx',
+              },
+            ],
+          },
+          {
+            id: 'c1-2-2',
+            title: 'XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong',
+            fileName: 'XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong.docx',
+            type: 'docx',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong.docx',
+          },
+          {
+            id: 'c1-2-3',
+            title: 'XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong',
+            fileName: 'XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong.pdf',
+            type: 'pdf',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.2 Chỉ số chất lượng/XN-QTQL 5.1.2 Quy trinh theo doi chi so chat luong.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c1-3',
+        title: '5.1.3 Xem xét của lãnh đạo',
+        type: 'folder',
+        children: [
+          {
+            id: 'c1-3-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c1-3-1-1',
+                title: 'Báo cáo hoạt đông xem xét của lãnh đạo',
+                fileName: 'Báo cáo hoạt đông xem xét của lãnh đạo.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.3 Xem xét của lãnh đạo/Biểu mẫu có nội dung (tham khảo)/Báo cáo hoạt đông xem xét của lãnh đạo.docx',
+              },
+              {
+                id: 'c1-3-1-2',
+                title: 'XN-BM 5.1.3.01 Chuong trinh xem xet cua lanh dao',
+                fileName: 'XN-BM 5.1.3.01 Chuong trinh xem xet cua lanh dao.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.3 Xem xét của lãnh đạo/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.3.01 Chuong trinh xem xet cua lanh dao.docx',
+              },
+              {
+                id: 'c1-3-1-3',
+                title: 'XN-BM 5.1.3.02 Bien ban xem xet cua lanh dao',
+                fileName: 'XN-BM 5.1.3.02 Bien ban xem xet cua lanh dao.docx',
+                type: 'docx',
+                path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.3 Xem xét của lãnh đạo/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.1.3.02 Bien ban xem xet cua lanh dao.docx',
+              },
+            ],
+          },
+          {
+            id: 'c1-3-2',
+            title: 'XN-QTQL 5.1.3 Xem xet cua lanh dao',
+            fileName: 'XN-QTQL 5.1.3 Xem xet cua lanh dao.docx',
+            type: 'docx',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.3 Xem xét của lãnh đạo/XN-QTQL 5.1.3 Xem xet cua lanh dao.docx',
+          },
+          {
+            id: 'c1-3-3',
+            title: 'XN-QTQL 5.1.3 Xem xet cua lanh dao',
+            fileName: 'XN-QTQL 5.1.3 Xem xet cua lanh dao.pdf',
+            type: 'pdf',
+            path: '2429.2026/1. Chương I Tổ chức quản lý/5.1.3 Xem xét của lãnh đạo/XN-QTQL 5.1.3 Xem xet cua lanh dao.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c1-4',
+        title: 'Chinh sach chat luong',
+        fileName: 'Chinh sach chat luong.pdf',
+        type: 'pdf',
+        path: '2429.2026/1. Chương I Tổ chức quản lý/Chinh sach chat luong.pdf',
+      },
+      {
+        id: 'c1-5',
+        title: 'Chính sách chất lượng',
+        fileName: 'Chính sách chất lượng.docx',
+        type: 'docx',
+        path: '2429.2026/1. Chương I Tổ chức quản lý/Chính sách chất lượng.docx',
+      },
+      {
+        id: 'c1-6',
+        title: 'Muc tieu chat luong',
+        fileName: 'Muc tieu chat luong.pdf',
+        type: 'pdf',
+        path: '2429.2026/1. Chương I Tổ chức quản lý/Muc tieu chat luong.pdf',
+      },
+      {
+        id: 'c1-7',
+        title: 'Mục tiêu chất lượng',
+        fileName: 'Mục tiêu chất lượng.docx',
+        type: 'docx',
+        path: '2429.2026/1. Chương I Tổ chức quản lý/Mục tiêu chất lượng.docx',
+      },
+    ],
+  },
+  {
+    id: 'c2',
+    title: '2. Chương II Tài liệu hồ sơ',
+    type: 'folder',
+    children: [
+      {
+        id: 'c2-1',
+        title: '5.2.1 Tai lieu he thong quan ly',
+        type: 'folder',
+        children: [
+          {
+            id: 'c2-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c2-1-1-1',
+                title: 'XN-BM 5.2.1.01 Danh mục tài liệu nội bộ',
+                fileName: 'XN-BM 5.2.1.01 Danh mục tài liệu nội bộ.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.01 Danh mục tài liệu nội bộ.docx',
+              },
+              {
+                id: 'c2-1-1-2',
+                title: 'XN-BM 5.2.1.02 Danh mục tài liệu bên ngoài',
+                fileName: 'XN-BM 5.2.1.02 Danh mục tài liệu bên ngoài.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.02 Danh mục tài liệu bên ngoài.docx',
+              },
+              {
+                id: 'c2-1-1-3',
+                title: 'XN-BM 5.2.1.03 Sổ theo dõi phân phối thu hồi tài liệu',
+                fileName: 'XN-BM 5.2.1.03 Sổ theo dõi phân phối thu hồi tài liệu.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.03 Sổ theo dõi phân phối thu hồi tài liệu.docx',
+              },
+              {
+                id: 'c2-1-1-4',
+                title: 'XN-BM 5.2.1.04 Phiếu đề nghị biên soạn sửa đổi tài liệu',
+                fileName: 'XN-BM 5.2.1.04 Phiếu đề nghị biên soạn sửa đổi tài liệu.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.04 Phiếu đề nghị biên soạn sửa đổi tài liệu.docx',
+              },
+              {
+                id: 'c2-1-1-5',
+                title: 'XN-BM 5.2.1.05 Phiếu soát xét tài liệu định kỳ',
+                fileName: 'XN-BM 5.2.1.05 Phiếu soát xét tài liệu định kỳ.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.05 Phiếu soát xét tài liệu định kỳ.docx',
+              },
+              {
+                id: 'c2-1-1-6',
+                title: 'XN-BM 5.2.1.06 Phiếu hủy tài liệu',
+                fileName: 'XN-BM 5.2.1.06 Phiếu hủy tài liệu.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.06 Phiếu hủy tài liệu.docx',
+              },
+              {
+                id: 'c2-1-1-7',
+                title: 'XN-BM 5.2.1.07 Bien ban pho bien tài liệu',
+                fileName: 'XN-BM 5.2.1.07 Bien ban pho bien tài liệu.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.1.07 Bien ban pho bien tài liệu.docx',
+              },
+            ],
+          },
+          {
+            id: 'c2-1-2',
+            title: 'XN-QTQL 5.2.1 Quy trinh kiem soat tai lieu',
+            fileName: 'XN-QTQL 5.2.1 Quy trinh kiem soat tai lieu.pdf',
+            type: 'pdf',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/XN-QTQL 5.2.1 Quy trinh kiem soat tai lieu.pdf',
+          },
+          {
+            id: 'c2-1-3',
+            title: 'XN-QTQL 5.2.1 Quy trình kiểm soát tài liệu',
+            fileName: 'XN-QTQL 5.2.1 Quy trình kiểm soát tài liệu.docx',
+            type: 'docx',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/XN-QTQL 5.2.1 Quy trình kiểm soát tài liệu.docx',
+          },
+          {
+            id: 'c2-1-4',
+            title: 'XN-QTQL 5.2.2 Quy trinh huong dan bien soan quy trinh thuc hanh chuan',
+            fileName: 'XN-QTQL 5.2.2 Quy trinh huong dan bien soan quy trinh thuc hanh chuan.pdf',
+            type: 'pdf',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/XN-QTQL 5.2.2 Quy trinh huong dan bien soan quy trinh thuc hanh chuan.pdf',
+          },
+          {
+            id: 'c2-1-5',
+            title: 'XN-QTQL 5.2.2 Quy trình hướng dẫn biên soạn quy trình thực hành chuẩn',
+            fileName: 'XN-QTQL 5.2.2 Quy trình hướng dẫn biên soạn quy trình thực hành chuẩn.docx',
+            type: 'docx',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.1 Tai lieu he thong quan ly/XN-QTQL 5.2.2 Quy trình hướng dẫn biên soạn quy trình thực hành chuẩn.docx',
+          },
+        ],
+      },
+      {
+        id: 'c2-2',
+        title: '5.2.2 Quan ly ho so',
+        type: 'folder',
+        children: [
+          {
+            id: 'c2-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c2-2-1-1',
+                title: 'XN-BM 5.2.3.01 Danh mục hồ sơ',
+                fileName: 'XN-BM 5.2.3.01 Danh mục hồ sơ.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.2 Quan ly ho so/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.3.01 Danh mục hồ sơ.docx',
+              },
+              {
+                id: 'c2-2-1-2',
+                title: 'XN-BM 5.2.3.02 Phiếu hủy hồ sơ',
+                fileName: 'XN-BM 5.2.3.02 Phiếu hủy hồ sơ.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.2 Quan ly ho so/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.3.02 Phiếu hủy hồ sơ.docx',
+              },
+              {
+                id: 'c2-2-1-3',
+                title: 'XN-BM 5.2.3.03 Danh mục trong từng cặp hồ sơ',
+                fileName: 'XN-BM 5.2.3.03 Danh mục trong từng cặp hồ sơ.docx',
+                type: 'docx',
+                path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.2 Quan ly ho so/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.2.3.03 Danh mục trong từng cặp hồ sơ.docx',
+              },
+            ],
+          },
+          {
+            id: 'c2-2-2',
+            title: 'XN-QTQL 5.2.3 Quy trinh quan ly ho so',
+            fileName: 'XN-QTQL 5.2.3 Quy trinh quan ly ho so.docx',
+            type: 'docx',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.2 Quan ly ho so/XN-QTQL 5.2.3 Quy trinh quan ly ho so.docx',
+          },
+          {
+            id: 'c2-2-3',
+            title: 'XN-QTQL 5.2.3 Quy trinh quan ly ho so',
+            fileName: 'XN-QTQL 5.2.3 Quy trinh quan ly ho so.pdf',
+            type: 'pdf',
+            path: '2429.2026/2. Chương II Tài liệu hồ sơ/5.2.2 Quan ly ho so/XN-QTQL 5.2.3 Quy trinh quan ly ho so.pdf',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c3',
+    title: '3. Chương III. Nhân sự',
+    type: 'folder',
+    children: [
+      {
+        id: 'c3-1',
+        title: 'HS-5.3.1 Nhan su',
+        type: 'folder',
+        children: [
+          {
+            id: 'c3-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c3-1-1-1',
+                title: 'XN-BM 5.3.1.01 Danh sách nhân sự',
+                fileName: 'XN-BM 5.3.1.01 Danh sách nhân sự .docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.1.01 Danh sách nhân sự .docx',
+              },
+              {
+                id: 'c3-1-1-2',
+                title: 'XN-BM 5.3.1.02 Lý lịch cá nhân',
+                fileName: 'XN-BM 5.3.1.02 Lý lịch cá nhân.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.1.02 Lý lịch cá nhân.docx',
+              },
+              {
+                id: 'c3-1-1-3',
+                title: 'XN-BM 5.3.1.03 Bản mô tả công việc',
+                fileName: 'XN-BM 5.3.1.03 Bản mô tả công việc.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.1.03 Bản mô tả công việc.docx',
+              },
+              {
+                id: 'c3-1-1-4',
+                title: 'XN-BM 5.3.1.04 Phiếu tiêm chủng',
+                fileName: 'XN-BM 5.3.1.04 Phiếu tiêm chủng.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.1.04 Phiếu tiêm chủng.docx',
+              },
+              {
+                id: 'c3-1-1-5',
+                title: 'XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới',
+                fileName: 'XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới.docx',
+              },
+            ],
+          },
+          {
+            id: 'c3-1-2',
+            title: 'XN-QTQL 5.3.1 Quy trinh quan ly nhan su',
+            fileName: 'XN-QTQL 5.3.1 Quy trinh quan ly nhan su.pdf',
+            type: 'pdf',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/XN-QTQL 5.3.1 Quy trinh quan ly nhan su.pdf',
+          },
+          {
+            id: 'c3-1-3',
+            title: 'XN-QTQL 5.3.1 Quy trình quản lý nhân sự',
+            fileName: 'XN-QTQL 5.3.1 Quy trình quản lý nhân sự.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.1 Nhan su/XN-QTQL 5.3.1 Quy trình quản lý nhân sự.docx',
+          },
+        ],
+      },
+      {
+        id: 'c3-2',
+        title: 'HS-5.3.2 Dao tao',
+        type: 'folder',
+        children: [
+          {
+            id: 'c3-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c3-2-1-1',
+                title: 'BANG KIEM THỰC HÀNH',
+                type: 'folder',
+                children: [
+                  {
+                    id: 'c3-2-1-1-1',
+                    title: 'QUY TRÌNH TPT MÁU',
+                    fileName: 'QUY TRÌNH TPT MÁU.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/QUY TRÌNH TPT MÁU.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-2',
+                    title: 'ĐÁP ÁN CÂU 1',
+                    fileName: 'ĐÁP ÁN CÂU 1.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 1.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-3',
+                    title: 'ĐÁP ÁN CÂU 2',
+                    fileName: 'ĐÁP ÁN CÂU 2.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 2.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-4',
+                    title: 'ĐÁP ÁN CÂU 3',
+                    fileName: 'ĐÁP ÁN CÂU 3.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 3.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-5',
+                    title: 'ĐÁP ÁN CÂU 4',
+                    fileName: 'ĐÁP ÁN CÂU 4.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 4.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-6',
+                    title: 'ĐÁP ÁN CÂU 5',
+                    fileName: 'ĐÁP ÁN CÂU 5.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 5.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-7',
+                    title: 'ĐÁP ÁN CÂU 6',
+                    fileName: 'ĐÁP ÁN CÂU 6.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 6.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-8',
+                    title: 'ĐÁP ÁN CÂU 7',
+                    fileName: 'ĐÁP ÁN CÂU 7.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 7.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-9',
+                    title: 'ĐÁP ÁN CÂU 8',
+                    fileName: 'ĐÁP ÁN CÂU 8.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 8.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-10',
+                    title: 'ĐÁP ÁN CÂU 9',
+                    fileName: 'ĐÁP ÁN CÂU 9.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 9.docx',
+                  },
+                  {
+                    id: 'c3-2-1-1-11',
+                    title: 'ĐÁP ÁN CÂU 10',
+                    fileName: 'ĐÁP ÁN CÂU 10.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/BANG KIEM THỰC HÀNH/ĐÁP ÁN CÂU 10.docx',
+                  },
+                ],
+              },
+              {
+                id: 'c3-2-1-2',
+                title: 'XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân.',
+                fileName: 'XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân..docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân..docx',
+              },
+              {
+                id: 'c3-2-1-3',
+                title: 'XN-BM 5.3.2.02 Kế hoạch đào tạo',
+                fileName: 'XN-BM 5.3.2.02 Kế hoạch đào tạo.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.02 Kế hoạch đào tạo.docx',
+              },
+              {
+                id: 'c3-2-1-4',
+                title: 'XN-BM 5.3.2.03 Phiếu đào tạo nội bộ',
+                fileName: 'XN-BM 5.3.2.03 Phiếu đào tạo nội bộ.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.03 Phiếu đào tạo nội bộ.docx',
+              },
+              {
+                id: 'c3-2-1-5',
+                title: 'XN-BM 5.3.2.04 Sổ theo dõi đào tạo nội bộ',
+                fileName: 'XN-BM 5.3.2.04 Sổ theo dõi đào tạo nội bộ.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.04 Sổ theo dõi đào tạo nội bộ.docx',
+              },
+              {
+                id: 'c3-2-1-6',
+                title: 'XN-BM 5.3.2.05 Kết quả đào tạo nội bộ',
+                fileName: 'XN-BM 5.3.2.05 Kết quả đào tạo nội bộ.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.05 Kết quả đào tạo nội bộ.docx',
+              },
+              {
+                id: 'c3-2-1-7',
+                title: 'XN-BM 5.3.2.06 Xem xét hiệu quả đào tạo',
+                fileName: 'XN-BM 5.3.2.06 Xem xét hiệu quả đào tạo.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.06 Xem xét hiệu quả đào tạo.docx',
+              },
+              {
+                id: 'c3-2-1-8',
+                title: 'XN-BM 5.3.2.07 Ke hoach giam sat va phan cong giam sat nhan vien moi',
+                fileName: 'XN-BM 5.3.2.07 Ke hoach giam sat va phan cong giam sat nhan vien moi.pdf',
+                type: 'pdf',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.07 Ke hoach giam sat va phan cong giam sat nhan vien moi.pdf',
+              },
+              {
+                id: 'c3-2-1-9',
+                title: 'XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới',
+                fileName: 'XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới.docx',
+              },
+              {
+                id: 'c3-2-1-10',
+                title: 'XN-BM 5.3.2.08 Hướng dẫn nhân viên mới',
+                fileName: 'XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+              },
+            ],
+          },
+          {
+            id: 'c3-2-2',
+            title: 'XN-QTQL 5.3.2 Quy trinh quan ly dao tao',
+            fileName: 'XN-QTQL 5.3.2 Quy trinh quan ly dao tao.pdf',
+            type: 'pdf',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/XN-QTQL 5.3.2 Quy trinh quan ly dao tao.pdf',
+          },
+          {
+            id: 'c3-2-3',
+            title: 'XN-QTQL 5.3.2 Quy trình quản lý đào tạo',
+            fileName: 'XN-QTQL 5.3.2 Quy trình quản lý đào tạo.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.2 Dao tao/XN-QTQL 5.3.2 Quy trình quản lý đào tạo.docx',
+          },
+        ],
+      },
+      {
+        id: 'c3-3',
+        title: 'HS-5.3.3 Danh gia tay nghe nhan vien',
+        type: 'folder',
+        children: [
+          {
+            id: 'c3-3-1',
+            title: 'Biểu mẫu nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c3-3-1-1',
+                title: 'Phiếu đánh giá năng lực nhân viên',
+                type: 'folder',
+                children: [
+                  {
+                    id: 'c3-3-1-1-1',
+                    title: 'XN-BM 5.1.3.02  AFP',
+                    fileName: 'XN-BM 5.1.3.02  AFP.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/Phiếu đánh giá năng lực nhân viên/XN-BM 5.1.3.02  AFP.docx',
+                  },
+                  {
+                    id: 'c3-3-1-1-2',
+                    title: 'XN-BM 5.1.3.02  CA 12-5',
+                    fileName: 'XN-BM 5.1.3.02  CA 12-5.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/Phiếu đánh giá năng lực nhân viên/XN-BM 5.1.3.02  CA 12-5.docx',
+                  },
+                  {
+                    id: 'c3-3-1-1-3',
+                    title: 'XN-BM 5.1.3.02  FT3',
+                    fileName: 'XN-BM 5.1.3.02  FT3.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/Phiếu đánh giá năng lực nhân viên/XN-BM 5.1.3.02  FT3.docx',
+                  },
+                  {
+                    id: 'c3-3-1-1-4',
+                    title: 'XN-BM 5.1.3.02  FT4',
+                    fileName: 'XN-BM 5.1.3.02  FT4.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/Phiếu đánh giá năng lực nhân viên/XN-BM 5.1.3.02  FT4.docx',
+                  },
+                  {
+                    id: 'c3-3-1-1-5',
+                    title: 'XN-BM 5.1.3.02  TSH',
+                    fileName: 'XN-BM 5.1.3.02  TSH.docx',
+                    type: 'docx',
+                    path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/Phiếu đánh giá năng lực nhân viên/XN-BM 5.1.3.02  TSH.docx',
+                  },
+                ],
+              },
+              {
+                id: 'c3-3-1-2',
+                title: 'XN-BM 5.3.3.01 Kế hoạch đánh giá năng lực nhân viên',
+                fileName: 'XN-BM 5.3.3.01 Kế hoạch đánh giá năng lực nhân viên.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 5.3.3.01 Kế hoạch đánh giá năng lực nhân viên.docx',
+              },
+              {
+                id: 'c3-3-1-3',
+                title: 'XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên HH',
+                fileName: 'XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên HH.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên HH.docx',
+              },
+              {
+                id: 'c3-3-1-4',
+                title: 'XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên',
+                fileName: 'XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên.docx',
+              },
+              {
+                id: 'c3-3-1-5',
+                title: 'XN-BM 5.3.3.03 Xem xét năng lực nhân viên',
+                fileName: 'XN-BM 5.3.3.03 Xem xét năng lực nhân viên.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 5.3.3.03 Xem xét năng lực nhân viên.docx',
+              },
+              {
+                id: 'c3-3-1-6',
+                title: 'XN-BM 15.QTQL 16. Bảng kiểm ĐGNLNV- QT AST',
+                fileName: 'XN-BM 15.QTQL 16. Bảng kiểm ĐGNLNV- QT AST.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 15.QTQL 16. Bảng kiểm ĐGNLNV- QT AST.docx',
+              },
+              {
+                id: 'c3-3-1-7',
+                title: 'XN-BM 17 .QTQL 16. Tổng hợp KQ ĐGNL nhân viên 03.21 update 1.8.2021',
+                fileName: 'XN-BM 17 .QTQL 16. Tổng hợp KQ ĐGNL nhân viên 03.21 update 1.8.2021.docx',
+                type: 'docx',
+                path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/Biểu mẫu nội dung (tham khảo)/XN-BM 17 .QTQL 16. Tổng hợp KQ ĐGNL nhân viên 03.21 update 1.8.2021.docx',
+              },
+            ],
+          },
+          {
+            id: 'c3-3-2',
+            title: 'XN-QTQL 5.3.3 Quy trinh danh gia nang luc nhan vien',
+            fileName: 'XN-QTQL 5.3.3 Quy trinh danh gia nang luc nhan vien.pdf',
+            type: 'pdf',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/XN-QTQL 5.3.3 Quy trinh danh gia nang luc nhan vien.pdf',
+          },
+          {
+            id: 'c3-3-3',
+            title: 'XN-QTQL 5.3.3 Quy trình đánh giá năng lực nhân viên',
+            fileName: 'XN-QTQL 5.3.3 Quy trình đánh giá năng lực nhân viên.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/HS-5.3.3 Danh gia tay nghe nhan vien/XN-QTQL 5.3.3 Quy trình đánh giá năng lực nhân viên.docx',
+          },
+        ],
+      },
+      {
+        id: 'c3-4',
+        title: 'Nguyễn Văn A [Mẫu]',
+        type: 'folder',
+        children: [
+          {
+            id: 'c3-4-1',
+            title: '1 Danh mục hồ sơ 5.3.1 HS Quản lý nhân sự nhỏ',
+            fileName: '1 Danh mục hồ sơ 5.3.1 HS Quản lý nhân sự nhỏ.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/1 Danh mục hồ sơ 5.3.1 HS Quản lý nhân sự nhỏ.docx',
+          },
+          {
+            id: 'c3-4-2',
+            title: '2.XN-BM 5.3.1.02 Lý lịch cá nhân',
+            fileName: '2.XN-BM 5.3.1.02 Lý lịch cá nhân.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/2.XN-BM 5.3.1.02 Lý lịch cá nhân.docx',
+          },
+          {
+            id: 'c3-4-3',
+            title: '3.XN-BM 5.3.1.03 Bản mô tả công việc',
+            fileName: '3.XN-BM 5.3.1.03 Bản mô tả công việc.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/3.XN-BM 5.3.1.03 Bản mô tả công việc.docx',
+          },
+          {
+            id: 'c3-4-4',
+            title: '4.XN-BM 5.3.1.04 Phiếu tiêm chủng',
+            fileName: '4.XN-BM 5.3.1.04 Phiếu tiêm chủng.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/4.XN-BM 5.3.1.04 Phiếu tiêm chủng.docx',
+          },
+          {
+            id: 'c3-4-5',
+            title: '6.XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân.',
+            fileName: '6.XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân..docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/6.XN-BM 5.3.2.01 Phiếu yêu cầu đào tạo cá nhân..docx',
+          },
+          {
+            id: 'c3-4-6',
+            title: '7.XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên',
+            fileName: '7.XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/7.XN-BM 5.3.3.02 Phiếu đánh giá năng lực nhân viên.docx',
+          },
+          {
+            id: 'c3-4-7',
+            title: '8.[Neu co] XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới',
+            fileName: '8.[Neu co] XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/8.[Neu co] XN-BM 5.3.1.06 Bảng phân công định hướng cho nhân viên mới.docx',
+          },
+          {
+            id: 'c3-4-8',
+            title: '9.[Neu co] XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới',
+            fileName: '9.[Neu co] XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/9.[Neu co] XN-BM 5.3.2.07 Kế hoạch giám sát và phân công giám sát nhân viên mới.docx',
+          },
+          {
+            id: 'c3-4-9',
+            title: '10.[Neu co]  XN-BM 5.3.2.08 Hướng dẫn nhân viên mới',
+            fileName: '10.[Neu co]  XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/10.[Neu co]  XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+          },
+          {
+            id: 'c3-4-10',
+            title: '10.[Neu co] XN-BM 5.3.2.08 Hướng dẫn nhân viên mới',
+            fileName: '10.[Neu co] XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/10.[Neu co] XN-BM 5.3.2.08 Hướng dẫn nhân viên mới.docx',
+          },
+          {
+            id: 'c3-4-11',
+            title: 'Bìa hồ sơ nhân sự nhỏ HS1',
+            fileName: 'Bìa hồ sơ nhân sự nhỏ HS1.docx',
+            type: 'docx',
+            path: '2429.2026/3. Chương III. Nhân sự/Nguyễn Văn A [Mẫu]/Bìa hồ sơ nhân sự nhỏ HS1.docx',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c4',
+    title: '4. Chương IV Dịch vụ va quan ly khách hàng',
+    type: 'folder',
+    children: [
+      {
+        id: 'c4-1',
+        title: 'HS-5.4.1 Dich vu tu van',
+        type: 'folder',
+        children: [
+          {
+            id: 'c4-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c4-1-1-1',
+                title: 'XN-BM 5.4.1.01 So theo doi tu van',
+                fileName: 'XN-BM 5.4.1.01 So theo doi tu van.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.1 Dich vu tu van/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.1.01 So theo doi tu van.docx',
+              },
+              {
+                id: 'c4-1-1-2',
+                title: 'XN-BM 5.4.1.02 Phieu tu van',
+                fileName: 'XN-BM 5.4.1.02 Phieu tu van.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.1 Dich vu tu van/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.1.02 Phieu tu van.docx',
+              },
+            ],
+          },
+          {
+            id: 'c4-1-2',
+            title: 'XN-QTQL 5.4.1 Dich vu tu van',
+            fileName: 'XN-QTQL 5.4.1 Dich vu tu van.docx',
+            type: 'docx',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.1 Dich vu tu van/XN-QTQL 5.4.1 Dich vu tu van.docx',
+          },
+          {
+            id: 'c4-1-3',
+            title: 'XN-QTQL 5.4.1 Dich vu tu van',
+            fileName: 'XN-QTQL 5.4.1 Dich vu tu van.pdf',
+            type: 'pdf',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.1 Dich vu tu van/XN-QTQL 5.4.1 Dich vu tu van.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c4-2',
+        title: 'HS-5.4.2 Quan ly khieu nai',
+        type: 'folder',
+        children: [
+          {
+            id: 'c4-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c4-2-1-1',
+                title: 'Bìa sổ theo doi khieu nai',
+                fileName: 'Bìa sổ theo doi khieu nai.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/Bìa sổ theo doi khieu nai.docx',
+              },
+              {
+                id: 'c4-2-1-2',
+                title: 'XN-BM 5.4.2.01 So theo doi khieu nai',
+                fileName: 'XN-BM 5.4.2.01 So theo doi khieu nai.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.2.01 So theo doi khieu nai.docx',
+              },
+              {
+                id: 'c4-2-1-3',
+                title: 'XN-BM 5.4.2.02 Bien ban giai quyet khieu nai',
+                fileName: 'XN-BM 5.4.2.02 Bien ban giai quyet khieu nai.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.2.02 Bien ban giai quyet khieu nai.docx',
+              },
+              {
+                id: 'c4-2-1-4',
+                title: 'XN-BM 5.4.3.01 Ke hoach khao sat su khong hai long',
+                fileName: 'XN-BM 5.4.3.01 Ke hoach khao sat su khong hai long.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.3.01 Ke hoach khao sat su khong hai long.docx',
+              },
+              {
+                id: 'c4-2-1-5',
+                title: 'XN-BM 5.4.3.02 Phieu thu thap y kien khach hang',
+                fileName: 'XN-BM 5.4.3.02 Phieu thu thap y kien khach hang.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.3.02 Phieu thu thap y kien khach hang.docx',
+              },
+              {
+                id: 'c4-2-1-6',
+                title: 'XN-BM 5.4.3.03 Bao cao tong hop danh gia cua khach hang',
+                fileName: 'XN-BM 5.4.3.03 Bao cao tong hop danh gia cua khach hang.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.3.03 Bao cao tong hop danh gia cua khach hang.docx',
+              },
+            ],
+          },
+          {
+            id: 'c4-2-2',
+            title: 'XN-QTQL 5.4.2 Giai quyet khieu nai',
+            fileName: 'XN-QTQL 5.4.2 Giai quyet khieu nai.docx',
+            type: 'docx',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/XN-QTQL 5.4.2 Giai quyet khieu nai.docx',
+          },
+          {
+            id: 'c4-2-3',
+            title: 'XN-QTQL 5.4.2 Giai quyet khieu nai',
+            fileName: 'XN-QTQL 5.4.2 Giai quyet khieu nai.pdf',
+            type: 'pdf',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/XN-QTQL 5.4.2 Giai quyet khieu nai.pdf',
+          },
+          {
+            id: 'c4-2-4',
+            title: 'XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang',
+            fileName: 'XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang.docx',
+            type: 'docx',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang.docx',
+          },
+          {
+            id: 'c4-2-5',
+            title: 'XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang',
+            fileName: 'XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang.pdf',
+            type: 'pdf',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.2 Quan ly khieu nai/XN-QTQL 5.4.3 Quy trinh khao sat su hai long cua khach hang.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c4-3',
+        title: 'HS-5.4.4 PXN tham chiếu',
+        type: 'folder',
+        children: [
+          {
+            id: 'c4-3-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c4-3-1-1',
+                title: 'XN-BM 5.4.4.01 Danh sach PXN tham chieu',
+                fileName: 'XN-BM 5.4.4.01 Danh sach PXN tham chieu.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.4.01 Danh sach PXN tham chieu.docx',
+              },
+              {
+                id: 'c4-3-1-2',
+                title: 'XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu',
+                fileName: 'XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu.docx',
+              },
+              {
+                id: 'c4-3-1-3',
+                title: 'XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu_trước SD',
+                fileName: 'XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu_trước SD.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.4.02 Phieu danh gia PXN tham chieu_trước SD.docx',
+              },
+              {
+                id: 'c4-3-1-4',
+                title: 'XN-BM 5.4.4.03 Phieu giao nhan benh pham tham chieu',
+                fileName: 'XN-BM 5.4.4.03 Phieu giao nhan benh pham tham chieu.docx',
+                type: 'docx',
+                path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.4.4.03 Phieu giao nhan benh pham tham chieu.docx',
+              },
+            ],
+          },
+          {
+            id: 'c4-3-2',
+            title: 'XN-QTQL 5.4.4 Phong xet nghiem tham chieu',
+            fileName: 'XN-QTQL 5.4.4 Phong xet nghiem tham chieu.docx',
+            type: 'docx',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/XN-QTQL 5.4.4 Phong xet nghiem tham chieu.docx',
+          },
+          {
+            id: 'c4-3-3',
+            title: 'XN-QTQL 5.4.4 Phong xet nghiem tham chieu',
+            fileName: 'XN-QTQL 5.4.4 Phong xet nghiem tham chieu.pdf',
+            type: 'pdf',
+            path: '2429.2026/4. Chương IV Dịch vụ va quan ly khách hàng/HS-5.4.4 PXN tham chiếu/XN-QTQL 5.4.4 Phong xet nghiem tham chieu.pdf',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c5',
+    title: '5. Chương V Quản lý thiết bị',
+    type: 'folder',
+    children: [
+      {
+        id: 'c5-1',
+        title: 'Biểu mẫu có nội dung (tham khảo)',
+        type: 'folder',
+        children: [
+          {
+            id: 'c5-1-1',
+            title: 'XN-BM 5.5.1.01 Danh mục thiết bị',
+            fileName: 'XN-BM 5.5.1.01 Danh mục thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.01 Danh mục thiết bị.docx',
+          },
+          {
+            id: 'c5-1-2',
+            title: 'XN-BM 5.5.1.02 Biên bản bàn giao thiết bị',
+            fileName: 'XN-BM 5.5.1.02 Biên bản bàn giao thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.02 Biên bản bàn giao thiết bị.docx',
+          },
+          {
+            id: 'c5-1-3',
+            title: 'XN-BM 5.5.1.03 Lý lịch thiết bị',
+            fileName: 'XN-BM 5.5.1.03 Lý lịch thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.03 Lý lịch thiết bị.docx',
+          },
+          {
+            id: 'c5-1-4',
+            title: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ lạnh',
+            fileName: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ lạnh.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ lạnh.docx',
+          },
+          {
+            id: 'c5-1-5',
+            title: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ mát',
+            fileName: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ mát.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ mát.docx',
+          },
+          {
+            id: 'c5-1-6',
+            title: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ ấm',
+            fileName: 'XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ ấm.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.04 Biểu mẫu theo dõi nhiệt độ tủ ấm.docx',
+          },
+          {
+            id: 'c5-1-7',
+            title: 'XN-BM 5.5.1.05 Nhat ky su dung thiet bi',
+            fileName: 'XN-BM 5.5.1.05 Nhat ky su dung thiet bi.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.05 Nhat ky su dung thiet bi.docx',
+          },
+          {
+            id: 'c5-1-8',
+            title: 'XN-BM 5.5.1.06 Kế hoạch hiệu chuẩn và bảo dưỡng thiết bị',
+            fileName: 'XN-BM 5.5.1.06 Kế hoạch hiệu chuẩn và bảo dưỡng thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.06 Kế hoạch hiệu chuẩn và bảo dưỡng thiết bị.docx',
+          },
+          {
+            id: 'c5-1-9',
+            title: 'XN-BM 5.5.1.07 Đánh giá kết quả hiệu chuẩn',
+            fileName: 'XN-BM 5.5.1.07 Đánh giá kết quả hiệu chuẩn.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.07 Đánh giá kết quả hiệu chuẩn.docx',
+          },
+          {
+            id: 'c5-1-10',
+            title: 'XN-BM 5.5.1.08 Phiếu bảo trì bảo dưỡng thiết bị',
+            fileName: 'XN-BM 5.5.1.08 Phiếu bảo trì bảo dưỡng thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.08 Phiếu bảo trì bảo dưỡng thiết bị.docx',
+          },
+          {
+            id: 'c5-1-11',
+            title: 'XN-BM 5.5.1.09 Danh sach nha cung cap TB',
+            fileName: 'XN-BM 5.5.1.09 Danh sach nha cung cap TB.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.09 Danh sach nha cung cap TB.docx',
+          },
+          {
+            id: 'c5-1-12',
+            title: 'XN-BM 5.5.1.10 Bien ban gui thiet bị sua chua-hieu chuan',
+            fileName: 'XN-BM 5.5.1.10 Bien ban gui thiet bị sua chua-hieu chuan.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.10 Bien ban gui thiet bị sua chua-hieu chuan.docx',
+          },
+          {
+            id: 'c5-1-13',
+            title: 'XN-BM 5.5.1.11 Phiếu theo dõi khử nhiễm trang thiết bị',
+            fileName: 'XN-BM 5.5.1.11 Phiếu theo dõi khử nhiễm trang thiết bị.docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.5.1.11 Phiếu theo dõi khử nhiễm trang thiết bị.docx',
+          },
+        ],
+      },
+      {
+        id: 'c5-2',
+        title: 'Thiết bị A [mẫu]',
+        type: 'folder',
+        children: [
+          {
+            id: 'c5-2-1',
+            title: 'XN-BM 5.2.3.03 Danh mục tài liệu trong cặp hồ sơ lớn máy A [mẫu]',
+            fileName: 'XN-BM 5.2.3.03 Danh mục tài liệu trong cặp hồ sơ lớn máy A [mẫu].docx',
+            type: 'docx',
+            path: '2429.2026/5. Chương V Quản lý thiết bị/Thiết bị A [mẫu]/XN-BM 5.2.3.03 Danh mục tài liệu trong cặp hồ sơ lớn máy A [mẫu].docx',
+          },
+        ],
+      },
+      {
+        id: 'c5-3',
+        title: 'XN-QTQL 5.5.1 Quy trinh quan ly thiet bi',
+        fileName: 'XN-QTQL 5.5.1 Quy trinh quan ly thiet bi.pdf',
+        type: 'pdf',
+        path: '2429.2026/5. Chương V Quản lý thiết bị/XN-QTQL 5.5.1 Quy trinh quan ly thiet bi.pdf',
+      },
+      {
+        id: 'c5-4',
+        title: 'XN-QTQL 5.5.1 Quy trình quản lý thiết bị',
+        fileName: 'XN-QTQL 5.5.1 Quy trình quản lý thiết bị.docx',
+        type: 'docx',
+        path: '2429.2026/5. Chương V Quản lý thiết bị/XN-QTQL 5.5.1 Quy trình quản lý thiết bị.docx',
+      },
+    ],
+  },
+  {
+    id: 'c6',
+    title: '6. Chương VI Đánh giá nội bộ',
+    type: 'folder',
+    children: [
+      {
+        id: 'c6-1',
+        title: 'Biểu mẫu có nội dung (tham khảo)',
+        type: 'folder',
+        children: [
+          {
+            id: 'c6-1-1',
+            title: 'XN-BM 5.6.1.02 Phieu de nghi thanh lap doan danh gia',
+            fileName: 'XN-BM 5.6.1.02 Phieu de nghi thanh lap doan danh gia.docx',
+            type: 'docx',
+            path: '2429.2026/6. Chương VI Đánh giá nội bộ/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.6.1.02 Phieu de nghi thanh lap doan danh gia.docx',
+          },
+          {
+            id: 'c6-1-2',
+            title: 'XN-BM 5.6.1.03 Chuong trinh danh gia noi bo',
+            fileName: 'XN-BM 5.6.1.03 Chuong trinh danh gia noi bo.docx',
+            type: 'docx',
+            path: '2429.2026/6. Chương VI Đánh giá nội bộ/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.6.1.03 Chuong trinh danh gia noi bo.docx',
+          },
+          {
+            id: 'c6-1-3',
+            title: 'XN-BM 5.6.1.04 Bao cao phat hien trong dang gia noi bo',
+            fileName: 'XN-BM 5.6.1.04 Bao cao phat hien trong dang gia noi bo.docx',
+            type: 'docx',
+            path: '2429.2026/6. Chương VI Đánh giá nội bộ/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.6.1.04 Bao cao phat hien trong dang gia noi bo.docx',
+          },
+          {
+            id: 'c6-1-4',
+            title: 'XN-BM 5.6.1.05 Bao cao ket qua danh gia noi bo',
+            fileName: 'XN-BM 5.6.1.05 Bao cao ket qua danh gia noi bo.docx',
+            type: 'docx',
+            path: '2429.2026/6. Chương VI Đánh giá nội bộ/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.6.1.05 Bao cao ket qua danh gia noi bo.docx',
+          },
+        ],
+      },
+      {
+        id: 'c6-2',
+        title: 'XN-QTQL 5.6.1 Quy trinh danh gia noi bo',
+        fileName: 'XN-QTQL 5.6.1 Quy trinh danh gia noi bo.docx',
+        type: 'docx',
+        path: '2429.2026/6. Chương VI Đánh giá nội bộ/XN-QTQL 5.6.1 Quy trinh danh gia noi bo.docx',
+      },
+      {
+        id: 'c6-3',
+        title: 'XN-QTQL 5.6.1 Quy trinh danh gia noi bo',
+        fileName: 'XN-QTQL 5.6.1 Quy trinh danh gia noi bo.pdf',
+        type: 'pdf',
+        path: '2429.2026/6. Chương VI Đánh giá nội bộ/XN-QTQL 5.6.1 Quy trinh danh gia noi bo.pdf',
+      },
+    ],
+  },
+  {
+    id: 'c7',
+    title: '7. Chương VII Quản lý mua sắm vật tư, ttb',
+    type: 'folder',
+    children: [
+      {
+        id: 'c7-1',
+        title: 'HS-5.7.1 Dich vu ben ngoai',
+        type: 'folder',
+        children: [
+          {
+            id: 'c7-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c7-1-1-1',
+                title: 'XN-BM 5.7.1.01 Phieu de nghi mua sam va thuc hien dich vu',
+                fileName: 'XN-BM 5.7.1.01 Phieu de nghi mua sam va thuc hien dich vu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.01 Phieu de nghi mua sam va thuc hien dich vu.docx',
+              },
+              {
+                id: 'c7-1-1-2',
+                title: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hiệu chuẩn)',
+                fileName: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hiệu chuẩn).docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hiệu chuẩn).docx',
+              },
+              {
+                id: 'c7-1-1-3',
+                title: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hóa chất)',
+                fileName: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hóa chất).docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (hóa chất).docx',
+              },
+              {
+                id: 'c7-1-1-4',
+                title: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (ngoại kiểm)',
+                fileName: 'XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (ngoại kiểm).docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.02 Phieu de xuat chat luong hang hoa-dich vu (ngoại kiểm).docx',
+              },
+              {
+                id: 'c7-1-1-5',
+                title: 'XN-BM 5.7.1.03 Danh sach nha cung cap duoc lua chon',
+                fileName: 'XN-BM 5.7.1.03 Danh sach nha cung cap duoc lua chon.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.03 Danh sach nha cung cap duoc lua chon.docx',
+              },
+              {
+                id: 'c7-1-1-6',
+                title: 'XN-BM 5.7.1.04 Phieu danh gia nha cung cap',
+                fileName: 'XN-BM 5.7.1.04 Phieu danh gia nha cung cap.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.04 Phieu danh gia nha cung cap.docx',
+              },
+              {
+                id: 'c7-1-1-7',
+                title: 'XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_hiệu chuẩn',
+                fileName: 'XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_hiệu chuẩn.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_hiệu chuẩn.docx',
+              },
+              {
+                id: 'c7-1-1-8',
+                title: 'XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_ngoại kiểm',
+                fileName: 'XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_ngoại kiểm.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.1.04 Phiếu đánh giá nhà cung cấp_ngoại kiểm.docx',
+              },
+            ],
+          },
+          {
+            id: 'c7-1-2',
+            title: 'XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai',
+            fileName: 'XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai.docx',
+            type: 'docx',
+            path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai.docx',
+          },
+          {
+            id: 'c7-1-3',
+            title: 'XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai',
+            fileName: 'XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai.pdf',
+            type: 'pdf',
+            path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.1 Dich vu ben ngoai/XN-QTQL 5.7.1 Quy trinh dich vu va vat tu ben ngoai.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c7-2',
+        title: 'HS-5.7.2 Vat tu',
+        type: 'folder',
+        children: [
+          {
+            id: 'c7-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c7-2-1-1',
+                title: 'Văn bản pháp luật về ATHC',
+                type: 'folder',
+                children: [
+                  {
+                    id: 'c7-2-1-1-1',
+                    title: '113.signed',
+                    fileName: '113.signed.pdf',
+                    type: 'pdf',
+                    path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/Văn bản pháp luật về ATHC/113.signed.pdf',
+                  },
+                  {
+                    id: 'c7-2-1-1-2',
+                    title: 'QCVN 05-2020 BCT An toàn hóa chất',
+                    fileName: 'QCVN 05-2020 BCT An toàn hóa chất.pdf',
+                    type: 'pdf',
+                    path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/Văn bản pháp luật về ATHC/QCVN 05-2020 BCT An toàn hóa chất.pdf',
+                  },
+                ],
+              },
+              {
+                id: 'c7-2-1-2',
+                title: 'MSDS_000000000030481706_vi',
+                fileName: 'MSDS_000000000030481706_vi.pdf',
+                type: 'pdf',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/MSDS_000000000030481706_vi.pdf',
+              },
+              {
+                id: 'c7-2-1-3',
+                title: 'multichem-a1c-abbott-msds-ver-02_vi',
+                fileName: 'multichem-a1c-abbott-msds-ver-02_vi.pdf',
+                type: 'pdf',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/multichem-a1c-abbott-msds-ver-02_vi.pdf',
+              },
+              {
+                id: 'c7-2-1-4',
+                title: 'upload_00049765_1648545989008',
+                fileName: 'upload_00049765_1648545989008.pdf',
+                type: 'pdf',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/upload_00049765_1648545989008.pdf',
+              },
+              {
+                id: 'c7-2-1-5',
+                title: 'XN-BM 5.7.2.01 Danh muc vat tu',
+                fileName: 'XN-BM 5.7.2.01 Danh muc vat tu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.01 Danh muc vat tu.docx',
+              },
+              {
+                id: 'c7-2-1-6',
+                title: 'XN-BM 5.7.2.02 Bien ban ban giao vat tu',
+                fileName: 'XN-BM 5.7.2.02 Bien ban ban giao vat tu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.02 Bien ban ban giao vat tu.docx',
+              },
+              {
+                id: 'c7-2-1-7',
+                title: 'XN-BM 5.7.2.03 Kiem tra chat luong vat tu',
+                fileName: 'XN-BM 5.7.2.03 Kiem tra chat luong vat tu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.03 Kiem tra chat luong vat tu.docx',
+              },
+              {
+                id: 'c7-2-1-8',
+                title: 'XN-BM 5.7.2.04 Phieu theo doi vat tu',
+                fileName: 'XN-BM 5.7.2.04 Phieu theo doi vat tu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.04 Phieu theo doi vat tu.docx',
+              },
+              {
+                id: 'c7-2-1-9',
+                title: 'XN-BM 5.7.2.05 Bien ban huy vat tu',
+                fileName: 'XN-BM 5.7.2.05 Bien ban huy vat tu.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.05 Bien ban huy vat tu.docx',
+              },
+              {
+                id: 'c7-2-1-10',
+                title: 'XN-BM 5.7.2.06 So pha che hoa chat',
+                fileName: 'XN-BM 5.7.2.06 So pha che hoa chat.docx',
+                type: 'docx',
+                path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.7.2.06 So pha che hoa chat.docx',
+              },
+            ],
+          },
+          {
+            id: 'c7-2-2',
+            title: 'XN-QTQL 5.7.2 Quan ly vat tu',
+            fileName: 'XN-QTQL 5.7.2 Quan ly vat tu.docx',
+            type: 'docx',
+            path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/XN-QTQL 5.7.2 Quan ly vat tu.docx',
+          },
+          {
+            id: 'c7-2-3',
+            title: 'XN-QTQL 5.7.2 Quan ly vat tu',
+            fileName: 'XN-QTQL 5.7.2 Quan ly vat tu.pdf',
+            type: 'pdf',
+            path: '2429.2026/7. Chương VII Quản lý mua sắm vật tư, ttb/HS-5.7.2 Vat tu/XN-QTQL 5.7.2 Quan ly vat tu.pdf',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c8',
+    title: '8. Chương VIII Quá trình xét nghiệm',
+    type: 'folder',
+    children: [
+      {
+        id: 'c8-1',
+        title: 'HS-5.8.1 Quá trình trước xét nghiệm',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-1-1-1',
+                title: 'XN-BM 5.8.1.01 Sổ giao nhận bệnh phẩm',
+                fileName: 'XN-BM 5.8.1.01 Sổ giao nhận bệnh phẩm.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.1 Quá trình trước xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.1.01 Sổ giao nhận bệnh phẩm.docx',
+              },
+              {
+                id: 'c8-1-1-2',
+                title: 'XN-BM 5.8.1.02 Biên bản từ chối mẫu',
+                fileName: 'XN-BM 5.8.1.02 Biên bản từ chối mẫu.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.1 Quá trình trước xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.1.02 Biên bản từ chối mẫu.docx',
+              },
+              {
+                id: 'c8-1-1-3',
+                title: 'XN-BM 5.8.1.03 Sổ theo dõi mẫu không đạt',
+                fileName: 'XN-BM 5.8.1.03 Sổ theo dõi mẫu không đạt.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.1 Quá trình trước xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.1.03 Sổ theo dõi mẫu không đạt.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-1-2',
+            title: 'XN-QTQL 5.8.1 Quy trinh truoc xet nghiem',
+            fileName: 'XN-QTQL 5.8.1 Quy trinh truoc xet nghiem.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.1 Quá trình trước xét nghiệm/XN-QTQL 5.8.1 Quy trinh truoc xet nghiem.pdf',
+          },
+          {
+            id: 'c8-1-3',
+            title: 'XN-QTQL 5.8.1 Quy trình trước xét nghiệm',
+            fileName: 'XN-QTQL 5.8.1 Quy trình trước xét nghiệm.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.1 Quá trình trước xét nghiệm/XN-QTQL 5.8.1 Quy trình trước xét nghiệm.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-2',
+        title: 'HS-5.8.2 Phê duyệt phương pháp',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-2-1',
+            title: '1. Quy trình quản lý',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-2-1-1',
+                title: 'XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem',
+                fileName: 'XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/1. Quy trình quản lý/XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem.docx',
+              },
+              {
+                id: 'c8-2-1-2',
+                title: 'XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem',
+                fileName: 'XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem.pdf',
+                type: 'pdf',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/1. Quy trình quản lý/XN-QTQL 5.8.2 Quy trinh lua chon va phe duyet phuong phap xet nghiem.pdf',
+              },
+            ],
+          },
+          {
+            id: 'c8-2-2',
+            title: '3. BM có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-2-2-1',
+                title: 'XN-BM 5.8.2.01 Phieu danh gia dieu kien co ban',
+                fileName: 'XN-BM 5.8.2.01 Phieu danh gia dieu kien co ban.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/3. BM có nội dung (tham khảo)/XN-BM 5.8.2.01 Phieu danh gia dieu kien co ban.docx',
+              },
+              {
+                id: 'c8-2-2-2',
+                title: 'XN-BM 5.8.2.02 Ke hoach thu nghiem va phe duyet phuong phap',
+                fileName: 'XN-BM 5.8.2.02 Ke hoach thu nghiem va phe duyet phuong phap.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/3. BM có nội dung (tham khảo)/XN-BM 5.8.2.02 Ke hoach thu nghiem va phe duyet phuong phap.docx',
+              },
+              {
+                id: 'c8-2-2-3',
+                title: 'XN-BM 5.8.2.08 Kết quả thực hiện Xác nhận định tính',
+                fileName: 'XN-BM 5.8.2.08 Kết quả thực hiện Xác nhận định tính.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/3. BM có nội dung (tham khảo)/XN-BM 5.8.2.08 Kết quả thực hiện Xác nhận định tính.docx',
+              },
+              {
+                id: 'c8-2-2-4',
+                title: 'XN-BM 5.8.2.09 Phieu tong hop ket qua phe duyet phuong phap',
+                fileName: 'XN-BM 5.8.2.09 Phieu tong hop ket qua phe duyet phuong phap.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/3. BM có nội dung (tham khảo)/XN-BM 5.8.2.09 Phieu tong hop ket qua phe duyet phuong phap.docx',
+              },
+              {
+                id: 'c8-2-2-5',
+                title: 'XN-BM 12.QTQL 23 Kết quả thực hiện xác nhận giới hạn phát hiện. chủng ecoli',
+                fileName: 'XN-BM 12.QTQL 23 Kết quả thực hiện xác nhận giới hạn phát hiện. chủng ecoli.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/3. BM có nội dung (tham khảo)/XN-BM 12.QTQL 23 Kết quả thực hiện xác nhận giới hạn phát hiện. chủng ecoli.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-2-3',
+            title: 'Kết quả xác nhận GTSD máy iflash 9000',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-2-3-1',
+                title: 'KQ XÁC NHẬN GIÁ TRỊ T3, FT4',
+                fileName: 'KQ XÁC NHẬN GIÁ TRỊ T3, FT4.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận GTSD máy iflash 9000/KQ XÁC NHẬN GIÁ TRỊ T3, FT4.xlsx',
+              },
+              {
+                id: 'c8-2-3-2',
+                title: 'PHE DUYET PHUONG PHAP_MIEN DICH 2429',
+                fileName: 'PHE DUYET PHUONG PHAP_MIEN DICH 2429.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận GTSD máy iflash 9000/PHE DUYET PHUONG PHAP_MIEN DICH 2429.xlsx',
+              },
+              {
+                id: 'c8-2-3-3',
+                title: 'QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP CA 72-4 23.12.2025',
+                fileName: 'QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP CA 72-4 23.12.2025.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận GTSD máy iflash 9000/QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP CA 72-4 23.12.2025.xlsx',
+              },
+              {
+                id: 'c8-2-3-4',
+                title: 'QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP T3,FT416.12.2025',
+                fileName: 'QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP T3,FT416.12.2025.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận GTSD máy iflash 9000/QUAN TRẮC GỐC ĐỘ LẶP, ĐỘ TÁI LẶP T3,FT416.12.2025.xlsx',
+              },
+            ],
+          },
+          {
+            id: 'c8-2-4',
+            title: 'Kết quả xác nhận máy 108 dị nguyên',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-2-4-1',
+                title: 'BIEN BAN DANH GIA XNGTSD 108 DI NGUYEN',
+                fileName: 'BIEN BAN DANH GIA XNGTSD 108 DI NGUYEN.pdf',
+                type: 'pdf',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/BIEN BAN DANH GIA XNGTSD 108 DI NGUYEN.pdf',
+              },
+              {
+                id: 'c8-2-4-2',
+                title: 'BIÊN BẢN ĐÁNH GIÁ XNGTSD 108 DỊ NGUYÊN',
+                fileName: 'BIÊN BẢN ĐÁNH GIÁ XNGTSD 108 DỊ NGUYÊN.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/BIÊN BẢN ĐÁNH GIÁ XNGTSD 108 DỊ NGUYÊN.docx',
+              },
+              {
+                id: 'c8-2-4-3',
+                title: 'KE HOACH XAC NHAN GIA TRI SU DUNG 108 DI NGUYEN',
+                fileName: 'KE HOACH XAC NHAN GIA TRI SU DUNG 108 DI NGUYEN.pdf',
+                type: 'pdf',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/KE HOACH XAC NHAN GIA TRI SU DUNG 108 DI NGUYEN.pdf',
+              },
+              {
+                id: 'c8-2-4-4',
+                title: 'KẾ HOẠCH XÁC NHẬN GIÁ TRỊ SỬ DỤNG 108 DỊ NGUYÊN',
+                fileName: 'KẾ HOẠCH XÁC NHẬN GIÁ TRỊ SỬ DỤNG 108 DỊ NGUYÊN.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/KẾ HOẠCH XÁC NHẬN GIÁ TRỊ SỬ DỤNG 108 DỊ NGUYÊN.docx',
+              },
+              {
+                id: 'c8-2-4-5',
+                title: 'QUAN TRẮC ĐỘ LẶP LẠI lần 1 13.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ LẶP LẠI lần 1 13.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ LẶP LẠI lần 1 13.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-6',
+                title: 'QUAN TRẮC ĐỘ LẶP LẠI lần 2 13.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ LẶP LẠI lần 2 13.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ LẶP LẠI lần 2 13.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-7',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 1 13.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 1 13.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 1 13.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-8',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 2 13.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 2 13.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 1 LẦN 2 13.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-9',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 1 14.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 1 14.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 1 14.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-10',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 2 14.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 2 14.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 2 LẦN 2 14.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-11',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 1 15.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 1 15.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 1 15.01.2026.xlsx',
+              },
+              {
+                id: 'c8-2-4-12',
+                title: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 2 15.01.2026',
+                fileName: 'QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 2 15.01.2026.xlsx',
+                type: 'xlsx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/Kết quả xác nhận máy 108 dị nguyên/QUAN TRẮC ĐỘ TÁI LẶP NGÀY 3 LẦN 2 15.01.2026.xlsx',
+              },
+            ],
+          },
+          {
+            id: 'c8-2-5',
+            title: 'PHE DUYET PHUONG PHAP_ĐỊNH TÍNH 2429',
+            fileName: 'PHE DUYET PHUONG PHAP_ĐỊNH TÍNH 2429.xlsx',
+            type: 'xlsx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/PHE DUYET PHUONG PHAP_ĐỊNH TÍNH 2429.xlsx',
+          },
+          {
+            id: 'c8-2-6',
+            title: 'XN-HDCV 5.8.2.01 Huong dan phe duyet phuong phap 2429',
+            fileName: 'XN-HDCV 5.8.2.01 Huong dan phe duyet phuong phap 2429.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.2 Phê duyệt phương pháp/XN-HDCV 5.8.2.01 Huong dan phe duyet phuong phap 2429.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-3',
+        title: 'HS-5.8.3 Đảm bảo chất lượng kết quả XN',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-3-1',
+            title: 'XN-QTQL 5.8.3 Quy trinh dam bao chat luong ket qua xet nghiem',
+            fileName: 'XN-QTQL 5.8.3 Quy trinh dam bao chat luong ket qua xet nghiem.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.3 Đảm bảo chất lượng kết quả XN/XN-QTQL 5.8.3 Quy trinh dam bao chat luong ket qua xet nghiem.pdf',
+          },
+          {
+            id: 'c8-3-2',
+            title: 'XN-QTQL 5.8.3 Quy trình đảm bảo chất lượng kết quả xét nghiệm',
+            fileName: 'XN-QTQL 5.8.3 Quy trình đảm bảo chất lượng kết quả xét nghiệm.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.3 Đảm bảo chất lượng kết quả XN/XN-QTQL 5.8.3 Quy trình đảm bảo chất lượng kết quả xét nghiệm.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-4',
+        title: 'HS-5.8.4 Nội kiểm định lượng',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-4-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-4-1-1',
+                title: 'XN-BM 5.8.4.01 Phiếu KQ nội kiểm Định lượng',
+                fileName: 'XN-BM 5.8.4.01 Phiếu KQ nội kiểm Định lượng.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.4.01 Phiếu KQ nội kiểm Định lượng.docx',
+              },
+              {
+                id: 'c8-4-1-2',
+                title: 'XN-BM 5.8.4.02 Levey-Jennings (mẫu tham khảo)',
+                fileName: 'XN-BM 5.8.4.02 Levey-Jennings (mẫu tham khảo).docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.4.02 Levey-Jennings (mẫu tham khảo).docx',
+              },
+              {
+                id: 'c8-4-1-3',
+                title: 'XN-BM 5.8.4.04 Biểu mẫu thiết lập giá trị kiểm soát QC mới',
+                fileName: 'XN-BM 5.8.4.04 Biểu mẫu thiết lập giá trị kiểm soát QC mới.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.4.04 Biểu mẫu thiết lập giá trị kiểm soát QC mới.docx',
+              },
+              {
+                id: 'c8-4-1-4',
+                title: 'XN-BM 5.8.4.06 Phiếu theo dõi lịch chuẩn XN',
+                fileName: 'XN-BM 5.8.4.06 Phiếu theo dõi lịch chuẩn XN.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.4.06 Phiếu theo dõi lịch chuẩn XN.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-4-2',
+            title: 'XN-QTQL 5.8.4 Quy trinh noi kiem tra xet nghiem dinh luong',
+            fileName: 'XN-QTQL 5.8.4 Quy trinh noi kiem tra xet nghiem dinh luong.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/XN-QTQL 5.8.4 Quy trinh noi kiem tra xet nghiem dinh luong.pdf',
+          },
+          {
+            id: 'c8-4-3',
+            title: 'XN-QTQL 5.8.4 Quy trình nội kiểm tra xét nghiệm định lượng',
+            fileName: 'XN-QTQL 5.8.4 Quy trình nội kiểm tra xét nghiệm định lượng.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.4 Nội kiểm định lượng/XN-QTQL 5.8.4 Quy trình nội kiểm tra xét nghiệm định lượng.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-5',
+        title: 'HS-5.8.5 Nội kiểm định tính và bán định lượng',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-5-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-5-1-1',
+                title: 'XN-BM 5.8.5.01 Phiếu KQ nội kiểm định tính',
+                fileName: 'XN-BM 5.8.5.01 Phiếu KQ nội kiểm định tính.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.5 Nội kiểm định tính và bán định lượng/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.5.01 Phiếu KQ nội kiểm định tính.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-5-2',
+            title: 'XN-QTQL 5.8.5 Quy trinh noi kiem tra xet nghiem dinh tinh va ban dinh luong',
+            fileName: 'XN-QTQL 5.8.5 Quy trinh noi kiem tra xet nghiem dinh tinh va ban dinh luong.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.5 Nội kiểm định tính và bán định lượng/XN-QTQL 5.8.5 Quy trinh noi kiem tra xet nghiem dinh tinh va ban dinh luong.pdf',
+          },
+          {
+            id: 'c8-5-3',
+            title: 'XN-QTQL 5.8.5 Quy trình nội kiểm tra xét nghiệm định tính và bán định lượng',
+            fileName: 'XN-QTQL 5.8.5 Quy trình nội kiểm tra xét nghiệm định tính và bán định lượng.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.5 Nội kiểm định tính và bán định lượng/XN-QTQL 5.8.5 Quy trình nội kiểm tra xét nghiệm định tính và bán định lượng.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-6',
+        title: 'HS-5.8.6 Ngoại kiểm',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-6-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-6-1-1',
+                title: 'XN-BM 5.8.6.01 Phiếu theo dõi kết quả ngoại kiểm',
+                fileName: 'XN-BM 5.8.6.01 Phiếu theo dõi kết quả ngoại kiểm.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.6 Ngoại kiểm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.6.01 Phiếu theo dõi kết quả ngoại kiểm.docx',
+              },
+              {
+                id: 'c8-6-1-2',
+                title: 'XN-BM 5.8.6.02 Biên bản họp nhân viên xác nhận EQA',
+                fileName: 'XN-BM 5.8.6.02 Biên bản họp nhân viên xác nhận EQA.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.6 Ngoại kiểm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.6.02 Biên bản họp nhân viên xác nhận EQA.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-6-2',
+            title: 'XN-QTQL 5.8.6 Quy trinh ngoai kiem tra',
+            fileName: 'XN-QTQL 5.8.6 Quy trinh ngoai kiem tra.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.6 Ngoại kiểm/XN-QTQL 5.8.6 Quy trinh ngoai kiem tra.pdf',
+          },
+          {
+            id: 'c8-6-3',
+            title: 'XN-QTQL 5.8.6 Quy trinh ngoại kiểm tra',
+            fileName: 'XN-QTQL 5.8.6 Quy trinh ngoại kiểm tra.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.6 Ngoại kiểm/XN-QTQL 5.8.6 Quy trinh ngoại kiểm tra.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-7',
+        title: 'HS-5.8.7 Tạm dừng kết quả',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-7-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-7-1-1',
+                title: 'XN-BM 5.8.7.01 Phiếu theo dõi tạm dừng trả kết quả',
+                fileName: 'XN-BM 5.8.7.01 Phiếu theo dõi tạm dừng trả kết quả.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.7 Tạm dừng kết quả/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.7.01 Phiếu theo dõi tạm dừng trả kết quả.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-7-2',
+            title: 'XN-QTQL 5.8.7 Quy trinh tam dung tra ket qua',
+            fileName: 'XN-QTQL 5.8.7 Quy trinh tam dung tra ket qua.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.7 Tạm dừng kết quả/XN-QTQL 5.8.7 Quy trinh tam dung tra ket qua.pdf',
+          },
+          {
+            id: 'c8-7-3',
+            title: 'XN-QTQL 5.8.7 Quy trình tạm dừng trả kết quả',
+            fileName: 'XN-QTQL 5.8.7 Quy trình tạm dừng trả kết quả.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.7 Tạm dừng kết quả/XN-QTQL 5.8.7 Quy trình tạm dừng trả kết quả.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-8',
+        title: 'HS-5.8.8 Rà soát kết quả',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-8-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-8-1-1',
+                title: 'bia so chay lai.dot',
+                fileName: 'bia so chay lai.dot.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.8 Rà soát kết quả/Biểu mẫu có nội dung (tham khảo)/bia so chay lai.dot.docx',
+              },
+              {
+                id: 'c8-8-1-2',
+                title: 'XN-BM 5.8.8.01 So chay lai ket qua',
+                fileName: 'XN-BM 5.8.8.01 So chay lai ket qua.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.8 Rà soát kết quả/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.8.01 So chay lai ket qua.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-8-2',
+            title: 'XN-QTQL 5.8.8 Ra soat ket qua xet nghiem',
+            fileName: 'XN-QTQL 5.8.8 Ra soat ket qua xet nghiem.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.8 Rà soát kết quả/XN-QTQL 5.8.8 Ra soat ket qua xet nghiem.pdf',
+          },
+          {
+            id: 'c8-8-3',
+            title: 'XN-QTQL 5.8.8 Rà soát kết qua xet nghiem',
+            fileName: 'XN-QTQL 5.8.8 Rà soát kết qua xet nghiem.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.8 Rà soát kết quả/XN-QTQL 5.8.8 Rà soát kết qua xet nghiem.docx',
+          },
+        ],
+      },
+      {
+        id: 'c8-9',
+        title: 'HS-5.8.9 Lưu và hủy bệnh phẩm',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-9-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-9-1-1',
+                title: 'XN-BM 5.8.9.01 So luu va huy benh pham',
+                fileName: 'XN-BM 5.8.9.01 So luu va huy benh pham.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.9 Lưu và hủy bệnh phẩm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.9.01 So luu va huy benh pham.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-9-2',
+            title: 'XN-QTQL 5.8.9 Quy trinh luu va huy mau',
+            fileName: 'XN-QTQL 5.8.9 Quy trinh luu va huy mau.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.9 Lưu và hủy bệnh phẩm/XN-QTQL 5.8.9 Quy trinh luu va huy mau.docx',
+          },
+          {
+            id: 'c8-9-3',
+            title: 'XN-QTQL 5.8.9 Quy trinh luu va huy mau',
+            fileName: 'XN-QTQL 5.8.9 Quy trinh luu va huy mau.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.9 Lưu và hủy bệnh phẩm/XN-QTQL 5.8.9 Quy trinh luu va huy mau.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c8-10',
+        title: 'HS-5.8.10 Trả kết quả xét nghiệm',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-10-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-10-1-1',
+                title: 'XN-BM 5.8.10.01 Phiếu trả KQ',
+                fileName: 'XN-BM 5.8.10.01 Phiếu trả KQ.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.10.01 Phiếu trả KQ.docx',
+              },
+              {
+                id: 'c8-10-1-2',
+                title: 'XN-BM 5.8.10.02 So tra ket qua khoa phong',
+                fileName: 'XN-BM 5.8.10.02 So tra ket qua khoa phong.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.10.02 So tra ket qua khoa phong.docx',
+              },
+              {
+                id: 'c8-10-1-3',
+                title: 'XN-BM 5.8.10.03 So tra ket qua điện thoai',
+                fileName: 'XN-BM 5.8.10.03 So tra ket qua điện thoai.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.10.03 So tra ket qua điện thoai.docx',
+              },
+              {
+                id: 'c8-10-1-4',
+                title: 'XN-BM 5.8.10.04 So tra ket qua canh bao',
+                fileName: 'XN-BM 5.8.10.04 So tra ket qua canh bao.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.10.04 So tra ket qua canh bao.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-10-2',
+            title: 'XN-QTQL 5.8.10 Tra ket qua xet nghiem',
+            fileName: 'XN-QTQL 5.8.10 Tra ket qua xet nghiem.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/XN-QTQL 5.8.10 Tra ket qua xet nghiem.docx',
+          },
+          {
+            id: 'c8-10-3',
+            title: 'XN-QTQL 5.8.10 Tra ket qua xet nghiem',
+            fileName: 'XN-QTQL 5.8.10 Tra ket qua xet nghiem.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.10 Trả kết quả xét nghiệm/XN-QTQL 5.8.10 Tra ket qua xet nghiem.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c8-11',
+        title: 'HS-5.8.11 Công bố kết quả',
+        type: 'folder',
+        children: [
+          {
+            id: 'c8-11-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c8-11-1-1',
+                title: 'XN-BM 5.8.11.01 So thu hồi kết quả',
+                fileName: 'XN-BM 5.8.11.01 So thu hồi kết quả.docx',
+                type: 'docx',
+                path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.11 Công bố kết quả/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.8.11.01 So thu hồi kết quả.docx',
+              },
+            ],
+          },
+          {
+            id: 'c8-11-2',
+            title: 'XN-QTQL 5.8.11 Cong bo ket qua',
+            fileName: 'XN-QTQL 5.8.11 Cong bo ket qua.docx',
+            type: 'docx',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.11 Công bố kết quả/XN-QTQL 5.8.11 Cong bo ket qua.docx',
+          },
+          {
+            id: 'c8-11-3',
+            title: 'XN-QTQL 5.8.11 Cong bo ket qua',
+            fileName: 'XN-QTQL 5.8.11 Cong bo ket qua.pdf',
+            type: 'pdf',
+            path: '2429.2026/8. Chương VIII Quá trình xét nghiệm/HS-5.8.11 Công bố kết quả/XN-QTQL 5.8.11 Cong bo ket qua.pdf',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c9',
+    title: '9. Chương IX Quản lý thông tin',
+    type: 'folder',
+    children: [
+      {
+        id: 'c9-1',
+        title: 'HS-5.9. Quan ly thong tin',
+        type: 'folder',
+        children: [
+          {
+            id: 'c9-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c9-1-1-1',
+                title: 'Bìa SỔ THEO DÕI SỰ CỐ HỆ THỐNG QUẢN LÝ THÔNG TIN (LIS)',
+                fileName: 'Bìa SỔ THEO DÕI SỰ CỐ HỆ THỐNG QUẢN LÝ THÔNG TIN (LIS).docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/Bìa SỔ THEO DÕI SỰ CỐ HỆ THỐNG QUẢN LÝ THÔNG TIN (LIS).docx',
+              },
+              {
+                id: 'c9-1-1-2',
+                title: 'XN-BM 5.9.1.01 Phieu de xuat yeu cau phan mem',
+                fileName: 'XN-BM 5.9.1.01 Phieu de xuat yeu cau phan mem.docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.9.1.01 Phieu de xuat yeu cau phan mem.docx',
+              },
+              {
+                id: 'c9-1-1-3',
+                title: 'XN-BM 5.9.1.02 Phieu kiem tra sao luu',
+                fileName: 'XN-BM 5.9.1.02 Phieu kiem tra sao luu.docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.9.1.02 Phieu kiem tra sao luu.docx',
+              },
+              {
+                id: 'c9-1-1-4',
+                title: 'XN-BM 5.9.1.03 Danh sach can bo truy cap phan mem',
+                fileName: 'XN-BM 5.9.1.03 Danh sach can bo truy cap phan mem.docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.9.1.03 Danh sach can bo truy cap phan mem.docx',
+              },
+              {
+                id: 'c9-1-1-5',
+                title: 'XN-BM 5.9.1.04 Phieu danh gia LIS sau nang cap',
+                fileName: 'XN-BM 5.9.1.04 Phieu danh gia LIS sau nang cap.docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.9.1.04 Phieu danh gia LIS sau nang cap.docx',
+              },
+              {
+                id: 'c9-1-1-6',
+                title: 'XN-BM 5.9.1.05 So theo doi su co CNTT',
+                fileName: 'XN-BM 5.9.1.05 So theo doi su co CNTT.docx',
+                type: 'docx',
+                path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.9.1.05 So theo doi su co CNTT.docx',
+              },
+            ],
+          },
+          {
+            id: 'c9-1-2',
+            title: 'XN-QTQL 5.9.01 Quan ly thong tin',
+            fileName: 'XN-QTQL 5.9.01 Quan ly thong tin.docx',
+            type: 'docx',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.01 Quan ly thong tin.docx',
+          },
+          {
+            id: 'c9-1-3',
+            title: 'XN-QTQL 5.9.01 Quan ly thong tin',
+            fileName: 'XN-QTQL 5.9.01 Quan ly thong tin.pdf',
+            type: 'pdf',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.01 Quan ly thong tin.pdf',
+          },
+          {
+            id: 'c9-1-4',
+            title: 'XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang',
+            fileName: 'XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang.docx',
+            type: 'docx',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang.docx',
+          },
+          {
+            id: 'c9-1-5',
+            title: 'XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang',
+            fileName: 'XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang.pdf',
+            type: 'pdf',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.02 Quy trinh bao mat thong tin khach hang.pdf',
+          },
+          {
+            id: 'c9-1-6',
+            title: 'XN-QTQL 5.9.03 Quy trinh trao doi thong tin va che do bao cao',
+            fileName: 'XN-QTQL 5.9.03 Quy trinh trao doi thong tin va che do bao cao.pdf',
+            type: 'pdf',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.03 Quy trinh trao doi thong tin va che do bao cao.pdf',
+          },
+          {
+            id: 'c9-1-7',
+            title: 'XN-QTQL 5.9.03 Quy trình trao đổi thông tin và chế độ báo cáo',
+            fileName: 'XN-QTQL 5.9.03 Quy trình trao đổi thông tin và chế độ báo cáo.docx',
+            type: 'docx',
+            path: '2429.2026/9. Chương IX Quản lý thông tin/HS-5.9. Quan ly thong tin/XN-QTQL 5.9.03 Quy trình trao đổi thông tin và chế độ báo cáo.docx',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c10',
+    title: '10. Chương X Sự KPH, HĐKP, HĐPN',
+    type: 'folder',
+    children: [
+      {
+        id: 'c10-1',
+        title: 'HS-5.10.1 Sự không phù hợp',
+        type: 'folder',
+        children: [
+          {
+            id: 'c10-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c10-1-1-1',
+                title: 'XN-BM 5.10.1.01 So theo doi su khong phu hop',
+                fileName: 'XN-BM 5.10.1.01 So theo doi su khong phu hop.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.1 Sự không phù hợp/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.1.01 So theo doi su khong phu hop.docx',
+              },
+              {
+                id: 'c10-1-1-2',
+                title: 'XN-BM 5.10.1.02 Phieu bao cao su khong phu hop',
+                fileName: 'XN-BM 5.10.1.02 Phieu bao cao su khong phu hop.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.1 Sự không phù hợp/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.1.02 Phieu bao cao su khong phu hop.docx',
+              },
+            ],
+          },
+          {
+            id: 'c10-1-2',
+            title: 'XN-QTQL 5.10.1 Su khong phu hop',
+            fileName: 'XN-QTQL 5.10.1 Su khong phu hop.docx',
+            type: 'docx',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.1 Sự không phù hợp/XN-QTQL 5.10.1 Su khong phu hop.docx',
+          },
+          {
+            id: 'c10-1-3',
+            title: 'XN-QTQL 5.10.1 Su khong phu hop',
+            fileName: 'XN-QTQL 5.10.1 Su khong phu hop.pdf',
+            type: 'pdf',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.1 Sự không phù hợp/XN-QTQL 5.10.1 Su khong phu hop.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c10-2',
+        title: 'HS-5.10.2 Hanh dong khac phuc',
+        type: 'folder',
+        children: [
+          {
+            id: 'c10-2-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c10-2-1-1',
+                title: 'Bìa sổ khac phuc',
+                fileName: 'Bìa sổ khac phuc.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.2 Hanh dong khac phuc/Biểu mẫu có nội dung (tham khảo)/Bìa sổ khac phuc.docx',
+              },
+              {
+                id: 'c10-2-1-2',
+                title: 'XN-BM 5.10.2.01 So theo doi hanh dong khac phuc',
+                fileName: 'XN-BM 5.10.2.01 So theo doi hanh dong khac phuc.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.2 Hanh dong khac phuc/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.2.01 So theo doi hanh dong khac phuc.docx',
+              },
+              {
+                id: 'c10-2-1-3',
+                title: 'XN-BM 5.10.2.02 Phieu bao cao hanh dong khac phuc',
+                fileName: 'XN-BM 5.10.2.02 Phieu bao cao hanh dong khac phuc.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.2 Hanh dong khac phuc/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.2.02 Phieu bao cao hanh dong khac phuc.docx',
+              },
+            ],
+          },
+          {
+            id: 'c10-2-2',
+            title: 'XN-QTQL 5.10.2 Hanh dong khac phuc',
+            fileName: 'XN-QTQL 5.10.2 Hanh dong khac phuc.docx',
+            type: 'docx',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.2 Hanh dong khac phuc/XN-QTQL 5.10.2 Hanh dong khac phuc.docx',
+          },
+          {
+            id: 'c10-2-3',
+            title: 'XN-QTQL 5.10.2 Hanh dong khac phuc',
+            fileName: 'XN-QTQL 5.10.2 Hanh dong khac phuc.pdf',
+            type: 'pdf',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.2 Hanh dong khac phuc/XN-QTQL 5.10.2 Hanh dong khac phuc.pdf',
+          },
+        ],
+      },
+      {
+        id: 'c10-3',
+        title: 'HS-5.10.3. Hanh dong phong ngua',
+        type: 'folder',
+        children: [
+          {
+            id: 'c10-3-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c10-3-1-1',
+                title: 'Bìa sổ phong ngua',
+                fileName: 'Bìa sổ phong ngua.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.3. Hanh dong phong ngua/Biểu mẫu có nội dung (tham khảo)/Bìa sổ phong ngua.docx',
+              },
+              {
+                id: 'c10-3-1-2',
+                title: 'XN-BM 5.10.3.01 So theo doi hanh dong phong ngưa',
+                fileName: 'XN-BM 5.10.3.01 So theo doi hanh dong phong ngưa.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.3. Hanh dong phong ngua/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.3.01 So theo doi hanh dong phong ngưa.docx',
+              },
+              {
+                id: 'c10-3-1-3',
+                title: 'XN-BM 5.10.3.02 Phiếu hành động phòng ngừa',
+                fileName: 'XN-BM 5.10.3.02 Phiếu hành động phòng ngừa.docx',
+                type: 'docx',
+                path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.3. Hanh dong phong ngua/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.10.3.02 Phiếu hành động phòng ngừa.docx',
+              },
+            ],
+          },
+          {
+            id: 'c10-3-2',
+            title: 'XN-QTQL 5.10.3 Hanh dong phong ngua',
+            fileName: 'XN-QTQL 5.10.3 Hanh dong phong ngua.docx',
+            type: 'docx',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.3. Hanh dong phong ngua/XN-QTQL 5.10.3 Hanh dong phong ngua.docx',
+          },
+          {
+            id: 'c10-3-3',
+            title: 'XN-QTQL 5.10.3 Hanh dong phong ngua',
+            fileName: 'XN-QTQL 5.10.3 Hanh dong phong ngua.pdf',
+            type: 'pdf',
+            path: '2429.2026/10. Chương X Sự KPH, HĐKP, HĐPN/HS-5.10.3. Hanh dong phong ngua/XN-QTQL 5.10.3 Hanh dong phong ngua.pdf',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c11',
+    title: '11. Chương XI Cải tiến liên tục',
+    type: 'folder',
+    children: [
+      {
+        id: 'c11-1',
+        title: 'HS-5.11 Cai tien lien tuc',
+        type: 'folder',
+        children: [
+          {
+            id: 'c11-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c11-1-1-1',
+                title: 'XN-BM 5.11.1.01 kế hoạch cải tiến chất lượng',
+                fileName: 'XN-BM 5.11.1.01 kế hoạch cải tiến chất lượng.docx',
+                type: 'docx',
+                path: '2429.2026/11. Chương XI Cải tiến liên tục/HS-5.11 Cai tien lien tuc/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.11.1.01 kế hoạch cải tiến chất lượng.docx',
+              },
+              {
+                id: 'c11-1-1-2',
+                title: 'XN-BM 5.11.1.02 sổ theo dõi hoạt động cai tiến chất lượng',
+                fileName: 'XN-BM 5.11.1.02 sổ theo dõi hoạt động cai tiến chất lượng.docx',
+                type: 'docx',
+                path: '2429.2026/11. Chương XI Cải tiến liên tục/HS-5.11 Cai tien lien tuc/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.11.1.02 sổ theo dõi hoạt động cai tiến chất lượng.docx',
+              },
+              {
+                id: 'c11-1-1-3',
+                title: 'XN-BM 5.11.1.03 Phiếu đề nghị và thực hiện cải tiến chất lượng',
+                fileName: 'XN-BM 5.11.1.03 Phiếu đề nghị và thực hiện cải tiến chất lượng.docx',
+                type: 'docx',
+                path: '2429.2026/11. Chương XI Cải tiến liên tục/HS-5.11 Cai tien lien tuc/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.11.1.03 Phiếu đề nghị và thực hiện cải tiến chất lượng.docx',
+              },
+            ],
+          },
+          {
+            id: 'c11-1-2',
+            title: 'XN-QTQL 5.11.1 Quy trinh cai tien lien tuc',
+            fileName: 'XN-QTQL 5.11.1 Quy trinh cai tien lien tuc.pdf',
+            type: 'pdf',
+            path: '2429.2026/11. Chương XI Cải tiến liên tục/HS-5.11 Cai tien lien tuc/XN-QTQL 5.11.1 Quy trinh cai tien lien tuc.pdf',
+          },
+          {
+            id: 'c11-1-3',
+            title: 'XN-QTQL 5.11.1 Quy trình cải tiến liên tục',
+            fileName: 'XN-QTQL 5.11.1 Quy trình cải tiến liên tục.docx',
+            type: 'docx',
+            path: '2429.2026/11. Chương XI Cải tiến liên tục/HS-5.11 Cai tien lien tuc/XN-QTQL 5.11.1 Quy trình cải tiến liên tục.docx',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c12',
+    title: '12. Chương XII CSVC và An toàn',
+    type: 'folder',
+    children: [
+      {
+        id: 'c12-1',
+        title: 'HS-5.12. Dieu kien moi truong',
+        type: 'folder',
+        children: [
+          {
+            id: 'c12-1-1',
+            title: 'Biểu mẫu có nội dung (tham khảo)',
+            type: 'folder',
+            children: [
+              {
+                id: 'c12-1-1-1',
+                title: 'Bia sổ ra vào pxn',
+                fileName: 'Bia sổ ra vào pxn.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/Bia sổ ra vào pxn.docx',
+              },
+              {
+                id: 'c12-1-1-2',
+                title: 'Danh gia rui ro mẫu tham khảo',
+                fileName: 'Danh gia rui ro mẫu tham khảo.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/Danh gia rui ro mẫu tham khảo.docx',
+              },
+              {
+                id: 'c12-1-1-3',
+                title: 'XN-BM 5.12.1.01  Quy dinh ra vao khu vuc xet nghiem',
+                fileName: 'XN-BM 5.12.1.01  Quy dinh ra vao khu vuc xet nghiem.pdf',
+                type: 'pdf',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.01  Quy dinh ra vao khu vuc xet nghiem.pdf',
+              },
+              {
+                id: 'c12-1-1-4',
+                title: 'XN-BM 5.12.1.01  Quy định ra vào khu vực xét nghiệm',
+                fileName: 'XN-BM 5.12.1.01  Quy định ra vào khu vực xét nghiệm.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.01  Quy định ra vào khu vực xét nghiệm.docx',
+              },
+              {
+                id: 'c12-1-1-5',
+                title: 'XN-BM 5.12.1.02 Nhật ký ra vào khu vực xét nghiệm',
+                fileName: 'XN-BM 5.12.1.02 Nhật ký ra vào khu vực xét nghiệm.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.02 Nhật ký ra vào khu vực xét nghiệm.docx',
+              },
+              {
+                id: 'c12-1-1-6',
+                title: 'XN-BM 5.12.1.03 Biểu mẫu theo dõi điều kiện môi trường',
+                fileName: 'XN-BM 5.12.1.03 Biểu mẫu theo dõi điều kiện môi trường.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.03 Biểu mẫu theo dõi điều kiện môi trường.docx',
+              },
+              {
+                id: 'c12-1-1-7',
+                title: 'XN-BM 5.12.1.04  Đăng ký sử dụng phòng - thiết bị',
+                fileName: 'XN-BM 5.12.1.04  Đăng ký sử dụng phòng - thiết bị.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.04  Đăng ký sử dụng phòng - thiết bị.docx',
+              },
+              {
+                id: 'c12-1-1-8',
+                title: 'XN-BM 5.12.1.05 Giao nhận chìa khóa',
+                fileName: 'XN-BM 5.12.1.05 Giao nhận chìa khóa.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.05 Giao nhận chìa khóa.docx',
+              },
+              {
+                id: 'c12-1-1-9',
+                title: 'XN-BM 5.12.1.06 Biểu mẫu theo dõi điều kiện tủ',
+                fileName: 'XN-BM 5.12.1.06 Biểu mẫu theo dõi điều kiện tủ.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.06 Biểu mẫu theo dõi điều kiện tủ.docx',
+              },
+              {
+                id: 'c12-1-1-10',
+                title: 'XN-BM 5.12.1.07 Phiếu báo cáo sự cố',
+                fileName: 'XN-BM 5.12.1.07 Phiếu báo cáo sự cố.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.07 Phiếu báo cáo sự cố.docx',
+              },
+              {
+                id: 'c12-1-1-11',
+                title: 'XN-BM 5.12.1.08. Danh sách dụng cụ chứa chất thải',
+                fileName: 'XN-BM 5.12.1.08. Danh sách dụng cụ chứa chất thải.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.08. Danh sách dụng cụ chứa chất thải.docx',
+              },
+              {
+                id: 'c12-1-1-12',
+                title: 'XN-BM 5.12.1.10 Các mẫu biển báo cửa phòng',
+                fileName: 'XN-BM 5.12.1.10 Các mẫu biển báo cửa phòng.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.10 Các mẫu biển báo cửa phòng.docx',
+              },
+              {
+                id: 'c12-1-1-13',
+                title: 'XN-BM 5.12.1.11 Noi quy phong XN',
+                fileName: 'XN-BM 5.12.1.11 Noi quy phong XN.pdf',
+                type: 'pdf',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.11 Noi quy phong XN.pdf',
+              },
+              {
+                id: 'c12-1-1-14',
+                title: 'XN-BM 5.12.1.11 Nội quy phòng XN',
+                fileName: 'XN-BM 5.12.1.11 Nội quy phòng XN.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.11 Nội quy phòng XN.docx',
+              },
+              {
+                id: 'c12-1-1-15',
+                title: 'XN-BM 5.12.1.12 Biểu mẫu theo dõi độ dẫn điện của nước',
+                fileName: 'XN-BM 5.12.1.12 Biểu mẫu theo dõi độ dẫn điện của nước.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.12 Biểu mẫu theo dõi độ dẫn điện của nước.docx',
+              },
+              {
+                id: 'c12-1-1-16',
+                title: 'XN-BM 5.12.1.13 Báo cáo tổng hợp tai nạn và phơi nhiễm',
+                fileName: 'XN-BM 5.12.1.13 Báo cáo tổng hợp tai nạn và phơi nhiễm.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.13 Báo cáo tổng hợp tai nạn và phơi nhiễm.docx',
+              },
+              {
+                id: 'c12-1-1-17',
+                title: 'XN-BM 5.12.1.14 Phiếu theo dõi khử nhiễm',
+                fileName: 'XN-BM 5.12.1.14 Phiếu theo dõi khử nhiễm.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.14 Phiếu theo dõi khử nhiễm.docx',
+              },
+              {
+                id: 'c12-1-1-18',
+                title: 'XN-BM 5.12.1.15 Sổ bàn giao chất thải',
+                fileName: 'XN-BM 5.12.1.15 Sổ bàn giao chất thải.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.1.15 Sổ bàn giao chất thải.docx',
+              },
+              {
+                id: 'c12-1-1-19',
+                title: 'XN-BM 5.12.2.01 Kế hoạch kiểm tra an toàn',
+                fileName: 'XN-BM 5.12.2.01 Kế hoạch kiểm tra an toàn.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.2.01 Kế hoạch kiểm tra an toàn.docx',
+              },
+              {
+                id: 'c12-1-1-20',
+                title: 'XN-BM 5.12.2.02 Biên bản kiểm tra an toàn',
+                fileName: 'XN-BM 5.12.2.02 Biên bản kiểm tra an toàn.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.2.02 Biên bản kiểm tra an toàn.docx',
+              },
+              {
+                id: 'c12-1-1-21',
+                title: 'XN-BM 5.12.4.01 Danh gia yeu to nguy cơ',
+                fileName: 'XN-BM 5.12.4.01 Danh gia yeu to nguy cơ.docx',
+                type: 'docx',
+                path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/Biểu mẫu có nội dung (tham khảo)/XN-BM 5.12.4.01 Danh gia yeu to nguy cơ.docx',
+              },
+            ],
+          },
+          {
+            id: 'c12-1-2',
+            title: 'XN-QTQL 5.12.1 Quy trinh dieu kien tien nghi va moi truong',
+            fileName: 'XN-QTQL 5.12.1 Quy trinh dieu kien tien nghi va moi truong.pdf',
+            type: 'pdf',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.1 Quy trinh dieu kien tien nghi va moi truong.pdf',
+          },
+          {
+            id: 'c12-1-3',
+            title: 'XN-QTQL 5.12.1 Quy trình điều kiện tiện nghi và môi trường',
+            fileName: 'XN-QTQL 5.12.1 Quy trình điều kiện tiện nghi và môi trường.docx',
+            type: 'docx',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.1 Quy trình điều kiện tiện nghi và môi trường.docx',
+          },
+          {
+            id: 'c12-1-4',
+            title: 'XN-QTQL 5.12.2 Quy trinh huong dan an toan',
+            fileName: 'XN-QTQL 5.12.2 Quy trinh huong dan an toan.pdf',
+            type: 'pdf',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.2 Quy trinh huong dan an toan.pdf',
+          },
+          {
+            id: 'c12-1-5',
+            title: 'XN-QTQL 5.12.2 Quy trình hướng dẫn an toàn',
+            fileName: 'XN-QTQL 5.12.2 Quy trình hướng dẫn an toàn.docx',
+            type: 'docx',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.2 Quy trình hướng dẫn an toàn.docx',
+          },
+          {
+            id: 'c12-1-6',
+            title: 'XN-QTQL 5.12.3 Quy trinh quan ly rui ro',
+            fileName: 'XN-QTQL 5.12.3 Quy trinh quan ly rui ro.pdf',
+            type: 'pdf',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.3 Quy trinh quan ly rui ro.pdf',
+          },
+          {
+            id: 'c12-1-7',
+            title: 'XN-QTQL 5.12.3 Quy trình quản lý rủi ro',
+            fileName: 'XN-QTQL 5.12.3 Quy trình quản lý rủi ro.docx',
+            type: 'docx',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.3 Quy trình quản lý rủi ro.docx',
+          },
+          {
+            id: 'c12-1-8',
+            title: 'XN-QTQL 5.12.4 Quy trinh danh gia nguy co',
+            fileName: 'XN-QTQL 5.12.4 Quy trinh danh gia nguy co.pdf',
+            type: 'pdf',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.4 Quy trinh danh gia nguy co.pdf',
+          },
+          {
+            id: 'c12-1-9',
+            title: 'XN-QTQL 5.12.4 Quy trình đánh giá nguy cơ',
+            fileName: 'XN-QTQL 5.12.4 Quy trình đánh giá nguy cơ.docx',
+            type: 'docx',
+            path: '2429.2026/12. Chương XII CSVC và An toàn/HS-5.12. Dieu kien moi truong/XN-QTQL 5.12.4 Quy trình đánh giá nguy cơ.docx',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'c13',
+    title: 'Sổ tay (5 Sổ)',
+    type: 'folder',
+    children: [
+      {
+        id: 'c13-1',
+        title: 'XN-STAT So tay an toan',
+        fileName: 'XN-STAT So tay an toan.pdf',
+        type: 'pdf',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STAT So tay an toan.pdf',
+      },
+      {
+        id: 'c13-2',
+        title: 'XN-STAT Sổ tay an toàn',
+        fileName: 'XN-STAT Sổ tay an toàn.docx',
+        type: 'docx',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STAT Sổ tay an toàn.docx',
+      },
+      {
+        id: 'c13-3',
+        title: 'XN-STBD So tay bao dong(Canh bao)',
+        fileName: 'XN-STBD So tay bao dong(Canh bao).pdf',
+        type: 'pdf',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STBD So tay bao dong(Canh bao).pdf',
+      },
+      {
+        id: 'c13-4',
+        title: 'XN-STBĐ Sổ tay báo động(Cảnh báo)',
+        fileName: 'XN-STBĐ Sổ tay báo động(Cảnh báo).docx',
+        type: 'docx',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STBĐ Sổ tay báo động(Cảnh báo).docx',
+      },
+      {
+        id: 'c13-5',
+        title: 'XN-STCL So tay chat luong',
+        fileName: 'XN-STCL So tay chat luong.pdf',
+        type: 'pdf',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STCL So tay chat luong.pdf',
+      },
+      {
+        id: 'c13-6',
+        title: 'XN-STCL Sổ tay chất lượng',
+        fileName: 'XN-STCL Sổ tay chất lượng.docx',
+        type: 'docx',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STCL Sổ tay chất lượng.docx',
+      },
+      {
+        id: 'c13-7',
+        title: 'XN-STDV So tay dich vu khach hang (lay mau)',
+        fileName: 'XN-STDV So tay dich vu khach hang (lay mau).pdf',
+        type: 'pdf',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STDV So tay dich vu khach hang (lay mau).pdf',
+      },
+      {
+        id: 'c13-8',
+        title: 'XN-STDV Sổ tay dịch vụ khách hàng (lấy mẫu) full khoa',
+        fileName: 'XN-STDV Sổ tay dịch vụ khách hàng (lấy mẫu) full khoa.docx',
+        type: 'docx',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STDV Sổ tay dịch vụ khách hàng (lấy mẫu) full khoa.docx',
+      },
+      {
+        id: 'c13-9',
+        title: 'XN-STTC So tay tham chieu',
+        fileName: 'XN-STTC So tay tham chieu.pdf',
+        type: 'pdf',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STTC So tay tham chieu.pdf',
+      },
+      {
+        id: 'c13-10',
+        title: 'XN-STTC Sổ tay tham chiếu',
+        fileName: 'XN-STTC Sổ tay tham chiếu.docx',
+        type: 'docx',
+        path: '2429.2026/Sổ tay (5 Sổ)/XN-STTC Sổ tay tham chiếu.docx',
+      },
+    ],
+  },
+  {
+    id: 'c14',
+    title: 'SO-TAY-HUONG-DAN-DANH-GIA-THUC-HIEN-TIEU-PXN_ban-cuoi_up',
+    fileName: 'SO-TAY-HUONG-DAN-DANH-GIA-THUC-HIEN-TIEU-PXN_ban-cuoi_up.pdf',
+    type: 'pdf',
+    path: '2429.2026/SO-TAY-HUONG-DAN-DANH-GIA-THUC-HIEN-TIEU-PXN_ban-cuoi_up.pdf',
+  },
+];
