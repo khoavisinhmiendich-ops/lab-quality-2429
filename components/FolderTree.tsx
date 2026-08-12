@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Bot } from 'lucide-react';
 
 export interface DocumentNode {
   id: string;
@@ -611,12 +612,13 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
 
       {/* Nút bật/tắt Trợ Lý AI */}
       <button
-        onClick={() => setIsChatOpen(!isChatOpen)}
-        className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
-      >
-        <Icon.Bot className="w-4 h-4" />
-        <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429 và các thông tin khác)'}</span>
-      </button>
+  onClick={() => setIsChatOpen(!isChatOpen)}
+  className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
+>
+  {/* eslint-disable-next-line @next/next/no-img-element */}
+  <img src="/icons/ai-assistant.gif" alt="Trợ lý AI" className="w-5 h-5 shrink-0 object-contain" />
+  <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429 và các thông tin khác)'}</span>
+</button>
 
       {/* Khung chat AI Popup */}
       {isChatOpen && (
