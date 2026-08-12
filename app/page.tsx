@@ -343,7 +343,7 @@ export default function HomePage() {
         <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-riseIn">
           <div className="relative mb-5">
             <div className="absolute inset-0 rounded-full bg-teal-500/10 blur-xl scale-150" />
-            <div className="relative w-16 h-16 rounded-2xl .bg-gradient-to-br from-teal-50 to-teal-100 border border-teal-200/70 flex items-center justify-center shadow-sm">
+            <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-50 to-teal-100 border border-teal-200/70 flex items-center justify-center shadow-sm">
               <Icon.File className="w-7 h-7 text-teal-600" />
             </div>
           </div>
@@ -620,7 +620,7 @@ export default function HomePage() {
               <div className="text-center mb-7">
                 <div className="relative inline-flex items-center justify-center w-16 h-16 mb-4">
                   <span className="absolute inset-0 rounded-full border border-teal-200 animate-ringSpin" style={{ borderStyle: 'dashed' }} />
-                  <span className="absolute .inset-[3px] rounded-full border border-teal-300/60 animate-ringSpinReverse" style={{ borderStyle: 'dotted' }} />
+                  <span className="absolute inset-[3px] rounded-full border border-teal-300/60 animate-ringSpinReverse" style={{ borderStyle: 'dotted' }} />
                   <span className="absolute inset-1.5 rounded-full bg-teal-50" />
                   <Icon.Lock className="relative w-6 h-6 text-teal-700" />
                 </div>

@@ -215,37 +215,31 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
       .catch((err) => console.error('Lỗi lấy cây thư mục:', err));
   }, []);
 
-// Thống kê số lượng Chương, PDF, Biểu mẫu và Sổ tay
-const stats = useMemo(() => {
-  let pdfs = 0;
-  let docs = 0;
+  // Thống kê số lượng Chương, PDF và Biểu mẫu
+  const stats = useMemo(() => {
+    let chapters = 0;
+    let pdfs = 0;
+    let docs = 0;
 
-  // Cố định 12 Chương theo QĐ 2429
-  const chapters = 12;
-  // Sổ tay chất lượng
-  const handbooks = 1;
-
-  const countFiles = (nodes: DocumentNode[]) => {
-    nodes.forEach((node) => {
-      if (node.children && node.children.length > 0) {
-        countFiles(node.children);
-      } else {
-        const isPdfFile =
-          node.type === 'pdf' ||
-          node.title.toLowerCase().endsWith('.pdf') ||
-          node.fileName?.toLowerCase().endsWith('.pdf');
-        if (isPdfFile) {
-          pdfs += 1;
+    const countNodes = (nodes: DocumentNode[]) => {
+      nodes.forEach((node) => {
+        if (node.children && node.children.length > 0) {
+          chapters += 1;
+          countNodes(node.children);
         } else {
-          docs += 1;
+          const isPdfFile = node.type === 'pdf' || node.title.toLowerCase().endsWith('.pdf') || node.fileName?.toLowerCase().endsWith('.pdf');
+          if (isPdfFile) {
+            pdfs += 1;
+          } else {
+            docs += 1;
+          }
         }
-      }
-    });
-  };
+      });
+    };
 
-  countFiles(treeData);
-  return { chapters, pdfs, docs, handbooks };
-}, [treeData]);
+    countNodes(treeData);
+    return { chapters, pdfs, docs };
+  }, [treeData]);
 
   // Danh sách tất cả các node phẳng để hỗ trợ tìm kiếm AI
   const allNodesList = useMemo(() => {
@@ -471,7 +465,7 @@ const stats = useMemo(() => {
   };
 
   return (
-    <aside className="w-80 h-full bg-white border-r border-slate-200/80 overflow-y-auto p-4 shrink-0 flex flex-col relative font-ui">
+    <aside className="w-80 h-full bg-white border-r border-slate-200/80 p-4 shrink-0 flex flex-col relative font-ui overflow-visible">
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
         .font-display { font-family: 'Fraunces', 'Times New Roman', serif; }
@@ -517,7 +511,7 @@ const stats = useMemo(() => {
           BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA
         </h3>
         <h2 className="font-display text-[13.5px] font-semibold text-[#0E3A41] uppercase tracking-wide mt-0.5">
-          Khoa VI SINH - MIỄN DỊCH
+          Khoa Vi Sinh - Miễn Dịch
         </h2>
       </div>
 
@@ -569,25 +563,20 @@ const stats = useMemo(() => {
       </div>
 
       {/* Bảng thống kê */}
-      {/* Bảng thống kê 4 ô */}
-<div className="grid grid-cols-4 gap-1 mb-3 p-2 .bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
-  <div className="flex flex-col">
-    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Chương</span>
-    <span className="text-xs font-bold text-amber-700">{stats.chapters}</span>
-  </div>
-  <div className="flex flex-col border-l border-teal-100/80">
-    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">PDF</span>
-    <span className="text-xs font-bold text-rose-600">{stats.pdfs}</span>
-  </div>
-  <div className="flex flex-col border-l border-teal-100/80">
-    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Biểu mẫu</span>
-    <span className="text-xs font-bold text-teal-700">{stats.docs}</span>
-  </div>
-  <div className="flex flex-col border-l border-teal-100/80">
-    <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-tight">Sổ tay</span>
-    <span className="text-xs font-bold text-indigo-600">{stats.handbooks}</span>
-  </div>
-</div>
+      <div className="grid grid-cols-3 gap-1.5 mb-3 p-2.5 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
+        <div className="flex flex-col">
+          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Chương</span>
+          <span className="text-sm font-bold text-amber-700">{stats.chapters}</span>
+        </div>
+        <div className="flex flex-col border-x border-teal-100/80">
+          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">PDF</span>
+          <span className="text-sm font-bold text-rose-600">{stats.pdfs}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Biểu mẫu</span>
+          <span className="text-sm font-bold text-teal-700">{stats.docs}</span>
+        </div>
+      </div>
 
       {/* Ô tìm kiếm danh mục */}
       <div className="mb-3 shrink-0 relative">
@@ -623,16 +612,16 @@ const stats = useMemo(() => {
       {/* Nút bật/tắt Trợ Lý AI */}
       <button
         onClick={() => setIsChatOpen(!isChatOpen)}
-        className="mt-3 w-full py-2.5 px-3 .bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
+        className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
       >
         <Icon.Bot className="w-4 h-4" />
-        <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429)'}</span>
+        <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429 và các thông tin khác)'}</span>
       </button>
 
       {/* Khung chat AI Popup */}
       {isChatOpen && (
-        <div className="absolute bottom-16 left-4 right-4 bg-white border border-slate-200 rounded-2xl shadow-[0_20px_50px_-16px_rgba(15,50,55,0.35)] z-50 flex flex-col h-96 overflow-hidden animate-slideUpFade origin-bottom">
-          <div className=".bg-gradient-to-r from-[#0E3A41] to-teal-700 text-white px-3.5 py-3 flex items-center justify-between text-xs font-bold shrink-0">
+        <div className="absolute top-20 bottom-16 left-4 right-4 bg-white border border-slate-200 rounded-2xl shadow-[0_20px_50px_-16px_rgba(15,50,55,0.35)] z-50 flex flex-col overflow-hidden animate-slideUpFade origin-bottom">
+          <div className="bg-gradient-to-r from-[#0E3A41] to-teal-700 text-white px-3.5 py-3 flex items-center justify-between text-xs font-bold shrink-0">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/15">
                 <Icon.Bot className="w-3.5 h-3.5" />
