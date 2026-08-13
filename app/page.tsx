@@ -597,7 +597,7 @@ export default function HomePage() {
         }
       `}</style>
 
-      {/* MÀN HÌNH ĐĂNG NHẬP PASS KEY */}
+      {/* MÀN HÌNH ĐĂNG NHẬP */}
       {!isAuthenticated && (
         <div
           className={`absolute inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isLoggingOut ? 'opacity-0' : 'opacity-100 animate-veilFade'}`}
@@ -625,7 +625,7 @@ export default function HomePage() {
                   <Icon.Lock className="relative w-6 h-6 text-teal-700" />
                 </div>
                 <h2 className="font-display text-[21px] font-semibold text-[#0E3A41] tracking-tight leading-snug">
-                  HỆ THỐNG QUẢN LÝ CHẤT LƯỢNG QĐ-2429/BYT
+                  HỒ SƠ QUẢN LÝ CHẤT LƯỢNG QĐ-2429/BYT
                 </h2>
                 <h2 className="font-display text-[21px] font-semibold text-[#0E3A41] tracking-tight leading-snug">
                   KHOA VI SINH - MIỄN DỊCH
