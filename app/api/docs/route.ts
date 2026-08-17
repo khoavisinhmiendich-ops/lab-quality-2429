@@ -1,25 +1,31 @@
-import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { apiSuccess } from '@/lib/api-response';
+import type { DocumentNode } from '@/lib/document-types';
 
-export interface DocumentNode {
-  id: string;
-  title: string;
-  fileName?: string;
-  type?: string;
-  path?: string;
-  children?: DocumentNode[];
+export const runtime = 'nodejs';
+
+/** Thư mục gốc chứa toàn bộ tài liệu QĐ-2429/BYT, nằm trong /public để phục vụ tĩnh */
+const DOCUMENT_ROOT_DIR = path.join(process.cwd(), 'public', '2429.2026');
+const DOCUMENT_ROOT_RELATIVE = '2429.2026';
+
+/** Bỏ qua các file tạm của Microsoft Office khi đang mở (dạng `~$Tên file.docx`) */
+function isTemporaryOfficeFile(fileName: string): boolean {
+  return fileName.startsWith('~$');
 }
 
-function getTree(dirPath: string, relativePath = ''): DocumentNode[] {
+/**
+ * Dựng cây thư mục/tài liệu đệ quy từ hệ thống file.
+ * Thư mục → node có `children`; File → node có `fileName`, `type`, `path`.
+ * Sắp xếp tự nhiên (numeric) theo tên để "2." đứng trước "10.".
+ */
+function buildDocumentTree(dirPath: string, relativePath = ''): DocumentNode[] {
   if (!fs.existsSync(dirPath)) return [];
 
-  // Lọc bỏ ngay các file tạm bắt đầu bằng ~$
-  const items = fs.readdirSync(dirPath, { withFileTypes: true }).filter((item) => !item.name.startsWith('~$'));
-
-  items.sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-  );
+  const items = fs
+    .readdirSync(dirPath, { withFileTypes: true })
+    .filter((item) => !isTemporaryOfficeFile(item.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   return items.map((item, index) => {
     const itemRelativePath = path.join(relativePath, item.name).replace(/\\/g, '/');
@@ -30,23 +36,23 @@ function getTree(dirPath: string, relativePath = ''): DocumentNode[] {
       return {
         id,
         title: item.name,
-        children: getTree(fullPath, itemRelativePath),
-      };
-    } else {
-      const ext = path.extname(item.name).toLowerCase().replace('.', '');
-      return {
-        id,
-        title: item.name.replace(/\.[^/.]+$/, ''),
-        fileName: item.name,
-        type: ext,
-        path: itemRelativePath,
+        children: buildDocumentTree(fullPath, itemRelativePath),
       };
     }
+
+    const ext = path.extname(item.name).toLowerCase().replace('.', '');
+    return {
+      id,
+      title: item.name.replace(/\.[^/.]+$/, ''),
+      fileName: item.name,
+      type: ext,
+      path: itemRelativePath,
+    };
   });
 }
 
+/** Trả về cây thư mục/tài liệu hiện có trên đĩa, dùng để dựng FolderTree phía client */
 export async function GET() {
-  const rootDir = path.join(process.cwd(), 'public', '2429.2026');
-  const tree = getTree(rootDir, '2429.2026');
-  return NextResponse.json(tree);
+  const tree = buildDocumentTree(DOCUMENT_ROOT_DIR, DOCUMENT_ROOT_RELATIVE);
+  return apiSuccess<DocumentNode[]>(tree);
 }

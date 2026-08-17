@@ -23,6 +23,7 @@ export default function HomePage() {
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
 
   const [selectedFile, setSelectedFile] = useState<DocumentNode | null>(null);
   const [htmlContent, setHtmlContent] = useState<string>('');
@@ -972,6 +973,16 @@ export default function HomePage() {
         <path d="M4 20.5h16" />
       </svg>
     ),
+    Menu: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <path d="M4 6.5h16M4 12h16M4 17.5h16" />
+      </svg>
+    ),
+    Close: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    ),
     ChevronsLeft: (p: React.SVGProps<SVGSVGElement>) => (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
         <path d="M13 6l-6 6 6 6M19 6l-6 6 6 6" />
@@ -1385,6 +1396,7 @@ export default function HomePage() {
                               colSpan={merge?.colSpan}
                               contentEditable
                               suppressContentEditableWarning
+                              spellCheck={false}
                               onFocus={() => {
                                 setSelectedCell(cell);
                                 setExcelFormulaValue(cell.text);
@@ -1655,6 +1667,7 @@ export default function HomePage() {
                 onKeyUp={refreshActiveFormats}
                 contentEditable
                 suppressContentEditableWarning
+                spellCheck={false}
                 onInput={handleInput}
                 dangerouslySetInnerHTML={{ __html: htmlContent }}
                 className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto w-[210mm] max-w-none shrink-0 outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm mb-12 self-start transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
@@ -1922,6 +1935,15 @@ export default function HomePage() {
       >
         {/* ---- HEADER ---- */}
         <header className="h-14 shrink-0 bg-white border-b border-slate-200/80 shadow-[0_1px_2px_rgba(15,50,55,0.04)] flex items-center px-4 gap-4 z-30 font-ui">
+          <button
+            onClick={() => setIsMobileSidebarOpen(true)}
+            aria-label="Mở danh mục tài liệu"
+            title="Danh mục tài liệu"
+            className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer shrink-0 -ml-1"
+          >
+            <Icon.Menu className="w-4.5 h-4.5" />
+          </button>
+
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="w-8 h-8 rounded-lg bg-[#0E3A41] flex items-center justify-center shrink-0">
               <Icon.Shield className="w-4 h-4 text-teal-200" />
@@ -1980,22 +2002,47 @@ export default function HomePage() {
         </header>
 
         {/* ---- THÂN CHÍNH: SIDEBAR + WORKSPACE ---- */}
-        <div className="flex-1 min-h-0 flex overflow-hidden">
-          {/* ---- SIDEBAR ---- */}
+        <div className="flex-1 min-h-0 flex overflow-hidden relative">
+          {/* Lớp phủ nền cho drawer di động — chỉ hiển thị trên màn hình nhỏ khi sidebar mở */}
+          {isMobileSidebarOpen && (
+            <div
+              onClick={() => setIsMobileSidebarOpen(false)}
+              aria-hidden="true"
+              className="lg:hidden fixed inset-0 top-14 bg-slate-900/40 backdrop-blur-[1px] z-30 animate-veilFade"
+            />
+          )}
+
+          {/* ---- SIDEBAR ----
+              Di động: drawer trượt từ trái, phủ (fixed), đóng bằng nút X hoặc chạm nền.
+              Desktop (lg+): nằm trong luồng bố cục, có thể thu gọn còn dải icon. */}
           <aside
-            className={`shrink-0 h-full bg-white border-r border-slate-200/80 flex flex-col overflow-hidden transition-[width] duration-200 ease-out font-ui ${
-              isSidebarCollapsed ? 'w-[60px]' : 'w-[280px]'
-            }`}
+            className={`bg-white border-r border-slate-200/80 flex flex-col overflow-hidden font-ui z-40
+              fixed left-0 top-14 bottom-0 w-[280px] transition-transform duration-200 ease-out
+              ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+              lg:static lg:top-auto lg:bottom-auto lg:translate-x-0 lg:h-full lg:shrink-0 lg:transition-[width]
+              ${isSidebarCollapsed ? 'lg:w-[60px]' : 'lg:w-[280px]'}`}
           >
-            <div className={`flex items-center justify-between px-3.5 py-3 border-b border-slate-100 shrink-0 ${isSidebarCollapsed ? 'px-0 justify-center' : ''}`}>
-              {!isSidebarCollapsed && (
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Kho tài liệu</span>
-              )}
+            <div className={`flex items-center justify-between px-3.5 py-3 border-b border-slate-100 shrink-0 ${isSidebarCollapsed ? 'lg:px-0 lg:justify-center' : ''}`}>
+              <span className={`text-[11px] font-bold uppercase tracking-wider text-slate-400 ${isSidebarCollapsed ? 'lg:hidden' : ''}`}>
+                Kho tài liệu
+              </span>
+
+              {/* Nút đóng — chỉ hiện trên di động */}
+              <button
+                onClick={() => setIsMobileSidebarOpen(false)}
+                title="Đóng danh mục"
+                aria-label="Đóng danh mục"
+                className="lg:hidden w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
+              >
+                <Icon.Close className="w-4 h-4" />
+              </button>
+
+              {/* Nút thu gọn/mở rộng — chỉ hiện trên desktop */}
               <button
                 onClick={() => setIsSidebarCollapsed((v) => !v)}
                 title={isSidebarCollapsed ? 'Mở rộng danh mục' : 'Thu gọn danh mục'}
                 aria-label={isSidebarCollapsed ? 'Mở rộng danh mục' : 'Thu gọn danh mục'}
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer shrink-0"
+                className="hidden lg:flex w-7 h-7 items-center justify-center rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer shrink-0"
               >
                 {isSidebarCollapsed ? <Icon.ChevronsRight className="w-4 h-4" /> : <Icon.ChevronsLeft className="w-4 h-4" />}
               </button>
@@ -2003,8 +2050,14 @@ export default function HomePage() {
 
             {/* Vùng cây thư mục — giữ nguyên FolderTree/DocumentNode, chỉ bọc khung UI mới.
                 Không unmount khi thu gọn để không mất trạng thái nội bộ của FolderTree. */}
-            <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar ${isSidebarCollapsed ? 'opacity-0 pointer-events-none w-0' : 'opacity-100'}`}>
-              <FolderTree onSelectFile={(file) => setSelectedFile(file)} selectedFile={selectedFile} />
+            <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar min-w-[280px] lg:min-w-0 ${isSidebarCollapsed ? 'lg:opacity-0 lg:pointer-events-none lg:w-0' : 'opacity-100'}`}>
+              <FolderTree
+                onSelectFile={(file) => {
+                  setSelectedFile(file);
+                  setIsMobileSidebarOpen(false);
+                }}
+                selectedFile={selectedFile}
+              />
             </div>
           </aside>
 

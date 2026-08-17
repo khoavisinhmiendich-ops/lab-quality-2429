@@ -30,9 +30,14 @@ export const metadata: Metadata = {
   },
 };
 
+// maximumScale + userScalable được khai báo TƯỜNG MINH để đảm bảo Safari/iOS
+// luôn cho phép pinch-to-zoom (một số phiên bản sẽ tự giới hạn zoom nếu không
+// khai báo rõ, ngay cả khi không có thuộc tính nào chủ động chặn).
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
   themeColor: "#0E3A41",
 };
 
