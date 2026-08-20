@@ -249,7 +249,7 @@ export const EditableForm: React.FC<Props> = ({ docCode, docTitle, pdfPath }) =>
             <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200/70 flex items-center justify-center mb-4">
               <FileText className="w-8 h-8 text-teal-700" />
             </div>
-            <h3 className="text-base font-semibold text-slate-800 mb-1">{docTitle}</h3>
+            <h3 className="text-base font-semibold text-slaate-800 mb-1">{docTitle}</h3>
             <p className="text-xs text-slate-500 mb-6 max-w-md">
               File Word đang ở chế độ xem nhanh. Chuyển sang thẻ &ldquo;Soạn thảo&rdquo; để điền thông tin trực tiếp vào bảng.
             </p>

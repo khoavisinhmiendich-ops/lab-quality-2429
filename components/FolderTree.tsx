@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Bot } from 'lucide-react';
 
 export interface DocumentNode {
   id: string;
@@ -16,6 +15,8 @@ export interface DocumentNode {
 interface FolderTreeProps {
   onSelectFile: (file: DocumentNode) => void;
   selectedFile?: DocumentNode | null;
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
 }
 
 interface ExternalResult {
@@ -48,25 +49,140 @@ const normalizeRomanNumerals = (str: string): string => {
     .replace(/\bchương\s+xii\b/g, 'chương 12');
 };
 
-const filterTree = (nodes: DocumentNode[], query: string): DocumentNode[] => {
-  if (!query.trim()) return nodes;
-  const cleanQuery = normalizeRomanNumerals(query);
+// ---- Phân loại tài liệu theo 12 Chương → 4 nhóm (SOP/Quy trình, Biểu mẫu, PDF, Tài liệu) ----
+// Quy tắc nhận diện dựa trên tiền tố tên file thật trong 2429.2026:
+//   - Đuôi .pdf                → PDF
+//   - Tiền tố "XN-QTQL"        → SOP / Quy trình
+//   - Tiền tố "XN-BM"          → Biểu mẫu
+//   - Tiền tố "STCL" hoặc chứa "sổ tay" → Sổ tay (Sổ tay chất lượng)
+//   - Còn lại                  → Tài liệu
+type FileCategoryKey = 'sop' | 'form' | 'pdf' | 'manual' | 'doc';
 
-  return nodes
-    .map((node) => {
-      const cleanTitle = normalizeRomanNumerals(node.title);
-      if (node.children) {
-        const filteredChildren = filterTree(node.children, query);
-        if (filteredChildren.length > 0) {
-          return { ...node, children: filteredChildren };
-        }
-      }
-      if (cleanTitle.includes(cleanQuery) || node.title.toLowerCase().includes(query.toLowerCase())) {
-        return node;
-      }
-      return null;
+interface CategoryGroup {
+  key: FileCategoryKey;
+  label: string;
+  files: DocumentNode[];
+}
+
+interface ChapterGroup {
+  id: string;
+  title: string;
+  categories: CategoryGroup[];
+  totalCount: number;
+}
+
+const CATEGORY_DEFS: { key: FileCategoryKey; label: string }[] = [
+  { key: 'sop', label: 'SOP / Quy trình' },
+  { key: 'form', label: 'Biểu mẫu' },
+  { key: 'pdf', label: 'PDF' },
+  { key: 'manual', label: 'Sổ tay' },
+  { key: 'doc', label: 'Tài liệu' },
+];
+
+/** Bỏ dấu tiếng Việt để so khớp không phụ thuộc dấu (vd: "Chương" ~ "chuong") */
+const stripDiacritics = (str: string): string =>
+  str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase();
+
+/** Chỉ những thư mục cấp 1 thật sự là "Chương" (vd: "1. Chương I Tổ chức quản lý") mới được tính là 1 trong 12 Chương chính */
+const isChapterFolder = (node: DocumentNode): boolean => stripDiacritics(node.title).includes('chuong');
+
+const classifyFile = (node: DocumentNode): FileCategoryKey => {
+  const ext = (node.type || '').toLowerCase();
+  const name = (node.fileName || node.title || '').trim().toLowerCase();
+  // Chuẩn hoá dấu gạch ngang/gạch dưới thành khoảng trắng để so khớp "so tay"/"so-tay"/"so_tay" như nhau
+  const cleanName = stripDiacritics(node.fileName || node.title || '').replace(/[-_]/g, ' ');
+
+  if (ext === 'pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (name.startsWith('xn-qtql')) return 'sop';
+  if (name.startsWith('xn-bm')) return 'form';
+  // Tiền tố thật của 5 loại sổ tay: XN-STAT, XN-STBĐ, XN-STCL, XN-STDV, XN-STTC
+  if (name.startsWith('xn-st') || cleanName.includes('so tay')) return 'manual';
+  return 'doc';
+};
+
+/** Duyệt đệ quy, gom mọi file lá (bỏ qua độ sâu thư mục con thật) vào một mảng phẳng */
+const collectLeafFiles = (nodes: DocumentNode[], acc: DocumentNode[] = []): DocumentNode[] => {
+  nodes.forEach((node) => {
+    if (node.children && node.children.length > 0) {
+      collectLeafFiles(node.children, acc);
+    } else if (node.path) {
+      acc.push(node);
+    }
+  });
+  return acc;
+};
+
+/** Phân loại 1 danh sách file phẳng vào các nhóm cố định (SOP/Biểu mẫu/PDF/Sổ tay/Tài liệu) */
+const bucketFilesByCategory = (files: DocumentNode[]): CategoryGroup[] => {
+  const buckets: Record<FileCategoryKey, DocumentNode[]> = { sop: [], form: [], pdf: [], manual: [], doc: [] };
+  files.forEach((file) => {
+    buckets[classifyFile(file)].push(file);
+  });
+  return CATEGORY_DEFS.map((def) => ({ ...def, files: buckets[def.key] })).filter((cat) => cat.files.length > 0);
+};
+
+/** Dựng đúng 12 Chương (lọc bỏ các thư mục cấp 1 không phải "Chương") → mỗi chương chia phẳng thành các nhóm cố định */
+const buildChapterGroups = (treeData: DocumentNode[]): ChapterGroup[] => {
+  return treeData.filter(isChapterFolder).map((chapterNode) => {
+    const allFiles = chapterNode.children ? collectLeafFiles(chapterNode.children) : [];
+    return {
+      id: chapterNode.id,
+      title: chapterNode.title,
+      categories: bucketFilesByCategory(allFiles),
+      totalCount: allFiles.length,
+    };
+  });
+};
+
+/**
+ * Gom mọi thứ ở cấp gốc KHÔNG PHẢI 1 trong 12 Chương (vd: thư mục "Sổ tay (5 Sổ)",
+ * các file PDF rời như quyết định, tiêu chí đánh giá...) vào 1 nhóm riêng "Sổ tay & Tài liệu khác"
+ * để không bị ẩn mất hoàn toàn khỏi giao diện, nhưng KHÔNG tính vào danh sách "12 Chương".
+ */
+const buildOtherGroup = (treeData: DocumentNode[]): ChapterGroup | null => {
+  const nonChapterNodes = treeData.filter((node) => !isChapterFolder(node));
+  const allFiles: DocumentNode[] = [];
+  nonChapterNodes.forEach((node) => {
+    if (node.children && node.children.length > 0) {
+      collectLeafFiles(node.children, allFiles);
+    } else if (node.path) {
+      allFiles.push(node);
+    }
+  });
+
+  if (allFiles.length === 0) return null;
+
+  return {
+    id: '__other__',
+    title: 'Sổ tay & Tài liệu khác',
+    categories: bucketFilesByCategory(allFiles),
+    totalCount: allFiles.length,
+  };
+};
+
+/** Lọc cây Chương/Danh mục/File theo từ khoá tìm kiếm, ẩn nhóm/chương rỗng */
+const filterChapterGroups = (chapters: ChapterGroup[], query: string): ChapterGroup[] => {
+  if (!query.trim()) return chapters;
+  const q = query.toLowerCase();
+  const cleanQ = normalizeRomanNumerals(query);
+
+  return chapters
+    .map((chapter) => {
+      const categories = chapter.categories
+        .map((cat) => ({
+          ...cat,
+          files: cat.files.filter(
+            (f) => f.title.toLowerCase().includes(q) || normalizeRomanNumerals(f.title).includes(cleanQ)
+          ),
+        }))
+        .filter((cat) => cat.files.length > 0);
+      return { ...chapter, categories };
     })
-    .filter(Boolean) as DocumentNode[];
+    .filter((chapter) => chapter.categories.length > 0);
 };
 
 // ---- Icon set (inline SVG, stroke-based — no external icon dependency) ----
@@ -168,11 +284,11 @@ const Icon = {
   ),
 };
 
-export default function FolderTree({ onSelectFile, selectedFile }: FolderTreeProps) {
+export default function FolderTree({ onSelectFile, selectedFile, searchQuery, onSearchQueryChange }: FolderTreeProps) {
   const [treeData, setTreeData] = useState<DocumentNode[]>([]);
-  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const [openChapters, setOpenChapters] = useState<Record<string, boolean>>({});
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [currentTime, setCurrentTime] = useState<string>('');
 
   // State Chatbot AI
@@ -216,31 +332,37 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
       .catch((err) => console.error('Lỗi lấy cây thư mục:', err));
   }, []);
 
-  // Thống kê số lượng Chương, PDF và Biểu mẫu
+  // Dựng đúng 12 Chương → 5 nhóm SOP/Biểu mẫu/PDF/Sổ tay/Tài liệu từ cây thư mục thật
+  const chapterGroups = useMemo(() => buildChapterGroups(treeData), [treeData]);
+  // Mọi thứ ở cấp gốc KHÔNG thuộc 1 trong 12 Chương (vd: thư mục "Sổ tay (5 Sổ)", các PDF rời)
+  // — gom vào 1 nhóm riêng để không bị ẩn mất, nhưng không tính là 1 trong 12 Chương.
+  const otherGroup = useMemo(() => buildOtherGroup(treeData), [treeData]);
+
+  const allDisplayGroups = useMemo(
+    () => (otherGroup ? [...chapterGroups, otherGroup] : chapterGroups),
+    [chapterGroups, otherGroup]
+  );
+
+  const filteredChapterGroups = useMemo(
+    () => filterChapterGroups(allDisplayGroups, searchQuery),
+    [allDisplayGroups, searchQuery]
+  );
+
+  // Thống kê số lượng Chương, PDF, Biểu mẫu và Sổ tay — tính trên TOÀN BỘ tài liệu (kể cả nhóm "Sổ tay & Tài liệu khác")
+  // để phản ánh đúng số liệu thật, dù chỉ 12 Chương được hiển thị là "Chương" chính thức.
   const stats = useMemo(() => {
-    let chapters = 0;
     let pdfs = 0;
-    let docs = 0;
-
-    const countNodes = (nodes: DocumentNode[]) => {
-      nodes.forEach((node) => {
-        if (node.children && node.children.length > 0) {
-          chapters += 1;
-          countNodes(node.children);
-        } else {
-          const isPdfFile = node.type === 'pdf' || node.title.toLowerCase().endsWith('.pdf') || node.fileName?.toLowerCase().endsWith('.pdf');
-          if (isPdfFile) {
-            pdfs += 1;
-          } else {
-            docs += 1;
-          }
-        }
+    let forms = 0;
+    let manuals = 0;
+    allDisplayGroups.forEach((chapter) => {
+      chapter.categories.forEach((cat) => {
+        if (cat.key === 'pdf') pdfs += cat.files.length;
+        if (cat.key === 'form') forms += cat.files.length;
+        if (cat.key === 'manual') manuals += cat.files.length;
       });
-    };
-
-    countNodes(treeData);
-    return { chapters, pdfs, docs };
-  }, [treeData]);
+    });
+    return { chapters: chapterGroups.length, pdfs, docs: forms, manuals };
+  }, [chapterGroups, allDisplayGroups]);
 
   // Danh sách tất cả các node phẳng để hỗ trợ tìm kiếm AI
   const allNodesList = useMemo(() => {
@@ -256,33 +378,6 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
     extractAll(treeData);
     return list;
   }, [treeData]);
-
-  // Các thao tác thanh công cụ (Tải)
-  const handleDownloadWord = () => {
-    if (!selectedFile?.path) {
-      alert('Vui lòng chọn 1 file biểu mẫu/tài liệu để tải về!');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = selectedFile.path;
-    link.download = selectedFile.fileName || `${selectedFile.title}.docx`;
-    link.click();
-  };
-
-  const handleDownloadPdf = () => {
-    if (!selectedFile?.path) {
-      alert('Vui lòng chọn 1 file để tải PDF!');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = selectedFile.path;
-    link.download = selectedFile.fileName || `${selectedFile.title}.pdf`;
-    link.click();
-  };
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   // Mở bài viết Internet ra giao diện đọc chính bên phải
   const handleOpenExternalArticle = (ext: ExternalResult) => {
@@ -324,7 +419,7 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
         const isFolder = Boolean(matched.children && matched.children.length > 0);
 
         if (isFolder) {
-          setSearchQuery(userQuery);
+          onSearchQueryChange(userQuery);
           setMessages((prev) => [
             ...prev,
             {
@@ -388,8 +483,29 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
     setIsAiThinking(false);
   };
 
-  const toggleFolder = (folderId: string) => {
-    setOpenFolders((prev) => ({ ...prev, [folderId]: !prev[folderId] }));
+  const CHAPTER_COLORS = [
+    { text: 'text-teal-700', bg: 'bg-teal-50', border: 'border-teal-200/80', dot: 'bg-teal-500' },
+    { text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200/80', dot: 'bg-amber-500' },
+    { text: 'text-rose-700', bg: 'bg-rose-50', border: 'border-rose-200/80', dot: 'bg-rose-500' },
+    { text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-200/80', dot: 'bg-violet-500' },
+    { text: 'text-sky-700', bg: 'bg-sky-50', border: 'border-sky-200/80', dot: 'bg-sky-500' },
+    { text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200/80', dot: 'bg-emerald-500' },
+  ];
+
+  const CATEGORY_ICON: Record<FileCategoryKey, (p: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
+    sop: Icon.BookOpen,
+    form: Icon.Doc,
+    pdf: Icon.Pdf,
+    manual: Icon.Layers,
+    doc: Icon.Doc,
+  };
+
+  const toggleChapter = (chapterId: string) => {
+    setOpenChapters((prev) => ({ ...prev, [chapterId]: !prev[chapterId] }));
+  };
+
+  const toggleCategory = (key: string) => {
+    setOpenCategories((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const handleFileClick = (file: DocumentNode) => {
@@ -397,67 +513,109 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
     onSelectFile(file);
   };
 
-  const filteredTreeData = useMemo(() => {
-    return filterTree(treeData, searchQuery);
-  }, [treeData, searchQuery]);
+  /** Cây 2 cấp: Chương (12 thư mục gốc thật) → Danh mục (SOP/Biểu mẫu/PDF/Tài liệu) → danh sách file phẳng */
+  const OTHER_GROUP_COLOR = { text: 'text-slate-600', bg: 'bg-slate-50', border: 'border-slate-200/80', dot: 'bg-slate-400' };
 
-  const renderTree = (nodes: DocumentNode[]) => {
+  const renderChapters = (chapters: ChapterGroup[]) => {
+    const isSearching = Boolean(searchQuery.trim());
+
     return (
-      <ul className="pl-3 space-y-0.5 border-l border-slate-200 ml-2">
-        {nodes.map((node) => {
-          const isFolder = Boolean(node.children && node.children.length > 0);
-          const isOpen = searchQuery.trim() ? true : (openFolders[node.id] ?? false);
-          const isSelected = selectedFileId === node.id;
-          const isPdfFile = node.type === 'pdf' || node.title.toLowerCase().endsWith('.pdf');
-
-          if (isFolder) {
-            return (
-              <li key={node.id} className="my-0.5">
-                <div
-                  onClick={() => toggleFolder(node.id)}
-                  className="group flex items-center gap-2 cursor-pointer font-semibold text-amber-800 hover:text-amber-900 py-1.5 px-2 rounded-lg hover:bg-amber-50 transition-colors duration-150 text-xs select-none"
-                >
-                  <Icon.ArrowRight
-                    className={`w-3 h-3 shrink-0 text-amber-500 transition-transform duration-300 ${isOpen ? 'rotate-90' : 'rotate-0'}`}
-                  />
-                  {isOpen ? (
-                    <Icon.FolderOpen className="w-4 h-4 shrink-0 text-amber-500" />
-                  ) : (
-                    <Icon.Folder className="w-4 h-4 shrink-0 text-amber-500" />
-                  )}
-                  <span className="truncate">{node.title}</span>
-                </div>
-
-                <div
-                  className={`grid transition-all duration-300 ease-in-out ${
-                    isOpen ? 'grid-rows-[1fr] opacity-100 mt-0.5' : 'grid-rows-[0fr] opacity-0'
-                  }`}
-                >
-                  <div className="overflow-hidden">
-                    {node.children && renderTree(node.children)}
-                  </div>
-                </div>
-              </li>
-            );
-          }
+      <ul className="space-y-1">
+        {chapters.map((chapter, chapterIndex) => {
+          const isChapterOpen = isSearching ? true : (openChapters[chapter.id] ?? false);
+          const isOtherGroup = chapter.id === '__other__';
+          const color = isOtherGroup ? OTHER_GROUP_COLOR : CHAPTER_COLORS[chapterIndex % CHAPTER_COLORS.length];
 
           return (
-            <li key={node.id}>
-              <button
-                onClick={() => handleFileClick(node)}
-                className={`w-full text-left flex items-center gap-2 py-1.5 px-2 rounded-lg text-xs transition-all duration-150 ${
-                  isSelected
-                    ? 'bg-teal-700 text-white font-semibold shadow-sm shadow-teal-900/20'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            <li key={chapter.id}>
+              {isOtherGroup && (
+                <div className="flex items-center gap-2 px-2 pt-2 pb-1">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-300">Ngoài 12 Chương</span>
+                  <div className="flex-1 h-px bg-slate-100" />
+                </div>
+              )}
+              <div
+                onClick={() => toggleChapter(chapter.id)}
+                className="group flex items-start gap-2 cursor-pointer font-bold py-1.5 px-2 rounded-lg hover:bg-slate-50 transition-colors duration-150 text-xs select-none"
+              >
+                <Icon.ArrowRight
+                  className={`w-3 h-3 shrink-0 mt-0.5 text-slate-400 transition-transform duration-300 ${isChapterOpen ? 'rotate-90' : 'rotate-0'}`}
+                />
+                <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${color.dot}`} />
+                <span className={`flex-1 break-words leading-snug ${isOtherGroup ? 'text-slate-500 italic' : 'text-slate-800'}`}>
+                  {chapter.title}
+                </span>
+                <span className="shrink-0 text-[10px] font-semibold text-slate-400 mt-0.5">{chapter.totalCount}</span>
+              </div>
+
+              <div
+                className={`grid transition-all duration-300 ease-in-out ${
+                  isChapterOpen ? 'grid-rows-[1fr] opacity-100 mt-0.5' : 'grid-rows-[0fr] opacity-0'
                 }`}
               >
-                {isPdfFile ? (
-                  <Icon.Pdf className={`w-4 h-4 shrink-0 ${isSelected ? 'text-white' : 'text-rose-500'}`} />
-                ) : (
-                  <Icon.Doc className={`w-4 h-4 shrink-0 ${isSelected ? 'text-white' : 'text-teal-600'}`} />
-                )}
-                <span className="truncate">{node.title}</span>
-              </button>
+                <div className="overflow-hidden pl-3 border-l border-slate-200 ml-3">
+                  <ul className="space-y-0.5 pl-1">
+                    {chapter.categories.map((cat) => {
+                      const catKey = `${chapter.id}:${cat.key}`;
+                      const isCatOpen = isSearching ? true : (openCategories[catKey] ?? false);
+                      const CategoryIcon = CATEGORY_ICON[cat.key];
+
+                      return (
+                        <li key={catKey} className="my-0.5">
+                          <div
+                            onClick={() => toggleCategory(catKey)}
+                            className={`flex items-center gap-2 cursor-pointer font-semibold py-1.5 px-2 rounded-lg transition-colors duration-150 text-[11.5px] select-none hover:bg-slate-50 ${color.text}`}
+                          >
+                            <Icon.ArrowRight
+                              className={`w-3 h-3 shrink-0 text-slate-400 transition-transform duration-300 ${isCatOpen ? 'rotate-90' : 'rotate-0'}`}
+                            />
+                            <CategoryIcon className="w-3.5 h-3.5 shrink-0" />
+                            <span className="flex-1 truncate">{cat.label}</span>
+                            <span className="shrink-0 text-[10px] font-semibold text-slate-400">{cat.files.length}</span>
+                          </div>
+
+                          <div
+                            className={`grid transition-all duration-300 ease-in-out ${
+                              isCatOpen ? 'grid-rows-[1fr] opacity-100 mt-0.5' : 'grid-rows-[0fr] opacity-0'
+                            }`}
+                          >
+                            <div className="overflow-hidden pl-3 border-l border-slate-200 ml-2.5">
+                              <ul className="space-y-0.5 py-0.5">
+                                {cat.files.map((file) => {
+                                  const isSelected = selectedFileId === file.id;
+                                  const isPdfFile = cat.key === 'pdf';
+
+                                  return (
+                                    <li key={file.id}>
+                                      <button
+                                        onClick={() => handleFileClick(file)}
+                                        title={file.title}
+                                        className={`w-full text-left flex items-start gap-2 py-1.5 px-2 rounded-lg text-xs transition-all duration-150 ${
+                                          isSelected
+                                            ? 'bg-teal-700 text-white font-semibold shadow-sm shadow-teal-900/20'
+                                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                                        }`}
+                                      >
+                                        {isPdfFile ? (
+                                          <Icon.Pdf className={`w-4 h-4 shrink-0 mt-0.5 ${isSelected ? 'text-white' : 'text-rose-500'}`} />
+                                        ) : (
+                                          <Icon.Doc className={`w-4 h-4 shrink-0 mt-0.5 ${isSelected ? 'text-white' : 'text-teal-600'}`} />
+                                        )}
+                                        {/* Hiển thị đầy đủ tên biểu mẫu/tài liệu, tự xuống dòng thay vì cắt "..." */}
+                                        <span className="break-words leading-snug">{file.title}</span>
+                                      </button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              </div>
             </li>
           );
         })}
@@ -466,7 +624,7 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
   };
 
   return (
-    <aside className="w-80 h-full bg-white border-r border-slate-200/80 p-4 shrink-0 flex flex-col relative font-ui overflow-visible">
+    <div className="w-full h-full flex flex-col relative font-ui overflow-visible p-4">
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
         .font-display { font-family: 'Fraunces', 'Times New Roman', serif; }
@@ -503,45 +661,12 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
         }
       `}</style>
 
-      {/* Header Bệnh viện */}
-      <div className="text-center pb-4 mb-3 border-b border-slate-200 shrink-0">
-        <div className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-teal-50 border border-teal-200/70 mb-2">
-          <Icon.Layers className="w-4.5 h-4.5 text-teal-700" />
-        </div>
-        <h3 className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">
-          BỆNH VIỆN PHONG - DA LIỄU TW QUY HÒA
-        </h3>
-        <h2 className="font-display text-[13.5px] font-semibold text-[#0E3A41] uppercase tracking-wide mt-0.5">
-          Khoa Vi Sinh - Miễn Dịch
-        </h2>
-      </div>
-
-      {/* Thanh công cụ */}
-      <div className="grid grid-cols-3 gap-1.5 mb-3 shrink-0">
-        <button
-          onClick={handleDownloadWord}
-          className="py-1.5 px-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 rounded-lg text-[10.5px] font-semibold flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:-translate-y-px cursor-pointer"
-          title="Tải file Word hiện tại"
-        >
-          <Icon.Download className="w-3.5 h-3.5" />
-          Word
-        </button>
-        <button
-          onClick={handleDownloadPdf}
-          className="py-1.5 px-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg text-[10.5px] font-semibold flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:-translate-y-px cursor-pointer"
-          title="Tải / Xuất file PDF"
-        >
-          <Icon.Pdf className="w-3.5 h-3.5" />
-          PDF
-        </button>
-        <button
-          onClick={handlePrint}
-          className="py-1.5 px-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-[10.5px] font-semibold flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:-translate-y-px cursor-pointer"
-          title="In tài liệu hiện tại"
-        >
-          <Icon.Print className="w-3.5 h-3.5" />
-          In File
-        </button>
+      {/* Tiêu đề khu vực tài liệu */}
+      <div className="mb-3 shrink-0">
+        <h1 className="font-bold text-slate-800 text-[13px] flex items-center gap-2">
+          <Icon.BookOpen className="w-4 h-4 text-teal-700" />
+          Hồ sơ quản lý chất lượng 2429
+        </h1>
       </div>
 
       {/* Đồng hồ hiển thị thời gian */}
@@ -555,54 +680,30 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
         </span>
       </div>
 
-      {/* Tiêu đề Bộ hồ sơ */}
-      <div className="mb-2 shrink-0">
-        <h1 className="font-bold text-slate-800 text-[13px] flex items-center gap-2">
-          <Icon.BookOpen className="w-4 h-4 text-teal-700" />
-          Hồ sơ quản lý chất lượng 2429
-        </h1>
-      </div>
-
       {/* Bảng thống kê */}
-      <div className="grid grid-cols-3 gap-1.5 mb-3 p-2.5 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
+      <div className="grid grid-cols-4 gap-1 mb-3 p-2.5 bg-gradient-to-br from-teal-50 to-teal-50/40 rounded-xl border border-teal-100 shrink-0 text-center">
         <div className="flex flex-col">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Chương</span>
+          <span className="text-[8.5px] text-slate-500 font-semibold uppercase tracking-wide">Chương</span>
           <span className="text-sm font-bold text-amber-700">{stats.chapters}</span>
         </div>
         <div className="flex flex-col border-x border-teal-100/80">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">PDF</span>
+          <span className="text-[8.5px] text-slate-500 font-semibold uppercase tracking-wide">PDF</span>
           <span className="text-sm font-bold text-rose-600">{stats.pdfs}</span>
         </div>
-        <div className="flex flex-col">
-          <span className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wide">Biểu mẫu</span>
+        <div className="flex flex-col border-r border-teal-100/80">
+          <span className="text-[8.5px] text-slate-500 font-semibold uppercase tracking-wide">Biểu mẫu</span>
           <span className="text-sm font-bold text-teal-700">{stats.docs}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[8.5px] text-slate-500 font-semibold uppercase tracking-wide">Sổ tay</span>
+          <span className="text-sm font-bold text-violet-700">{stats.manuals}</span>
         </div>
       </div>
 
-      {/* Ô tìm kiếm danh mục */}
-      <div className="mb-3 shrink-0 relative">
-        <Icon.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-        <input
-          type="text"
-          placeholder="Tìm kiếm tài liệu, biểu mẫu..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-8 py-1.75 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-teal-500/12 focus:border-teal-400 focus:bg-white transition-all duration-200 placeholder:text-slate-400"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-          >
-            <Icon.X className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-
-      {/* Danh mục Cây thư mục */}
+      {/* Danh mục 12 Chương */}
       <div className="flex-1 overflow-y-auto pr-1 animate-riseIn">
-        {filteredTreeData.length > 0 ? (
-          renderTree(filteredTreeData)
+        {filteredChapterGroups.length > 0 ? (
+          renderChapters(filteredChapterGroups)
         ) : (
           <div className="text-[11px] text-slate-400 p-3 text-center font-medium">
             {searchQuery ? 'Không tìm thấy tài liệu phù hợp' : 'Đang tải danh mục...'}
@@ -612,17 +713,17 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
 
       {/* Nút bật/tắt Trợ Lý AI */}
       <button
-  onClick={() => setIsChatOpen(!isChatOpen)}
-  className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
->
-  {/* eslint-disable-next-line @next/next/no-img-element */}
-  <img
-    src="/icons/ai-assistant.gif"
-    alt="Trợ lý AI"
-    className="w-5 h-5 shrink-0 object-contain rounded-full"
-  />
-  <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429 và các thông tin khác)'}</span>
-</button>
+        onClick={() => setIsChatOpen(!isChatOpen)}
+        className="mt-3 w-full py-2.5 px-3 bg-gradient-to-r from-[#0E3A41] to-teal-700 hover:to-teal-600 text-white font-semibold rounded-xl shadow-md shadow-teal-950/15 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 text-xs shrink-0 active:scale-[0.98] cursor-pointer"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/icons/ai-assistant.gif"
+          alt="Trợ lý AI"
+          className="w-5 h-5 shrink-0 object-contain rounded-full"
+        />
+        <span>{isChatOpen ? 'Đóng Trợ Lý AI' : 'Hỏi Trợ Lý AI (Tra cứu 2429 và các thông tin khác)'}</span>
+      </button>
 
       {/* Khung chat AI Popup */}
       {isChatOpen && (
@@ -728,6 +829,6 @@ export default function FolderTree({ onSelectFile, selectedFile }: FolderTreePro
           </form>
         </div>
       )}
-    </aside>
+    </div>
   );
 }

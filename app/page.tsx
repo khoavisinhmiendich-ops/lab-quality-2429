@@ -24,9 +24,36 @@ export default function HomePage() {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  // --- Kéo giãn / thu nhỏ chiều rộng sidebar bằng chuột (chỉ áp dụng desktop) ---
+  const SIDEBAR_MIN_WIDTH = 220;
+  const SIDEBAR_MAX_WIDTH = 480;
+  const SIDEBAR_DEFAULT_WIDTH = 280;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
+  const [isResizingSidebar, setIsResizingSidebar] = useState<boolean>(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  // --- Tìm kiếm tài liệu (điều khiển từ ô tìm kiếm ở Header, dùng chung với FolderTree) ---
+  const [docSearchQuery, setDocSearchQuery] = useState<string>('');
+  const headerSearchRef = useRef<HTMLInputElement>(null);
+  // --- Đếm số từ + zoom cho tài liệu Word (chỉ hiển thị, không ảnh hưởng logic lưu/định dạng) ---
+  const [wordCount, setWordCount] = useState<number>(0);
+  const WORD_ZOOM_MIN = 60;
+  const WORD_ZOOM_MAX = 150;
+  const WORD_ZOOM_STEP = 10;
+  const [wordZoom, setWordZoom] = useState<number>(100);
 
   const [selectedFile, setSelectedFile] = useState<DocumentNode | null>(null);
   const [htmlContent, setHtmlContent] = useState<string>('');
+  // Nội dung Header/Footer thật của file .docx (chỉ xem, không chỉnh sửa — mammoth không hỗ trợ phần này)
+  const [wordHeaderHtml, setWordHeaderHtml] = useState<string>('');
+  const [wordFooterHtml, setWordFooterHtml] = useState<string>('');
+
+  // Đếm số từ từ nội dung HTML — hàm thuần, gọi trực tiếp ở mọi nơi setHtmlContent()
+  // thay vì dùng useEffect riêng (tránh setState trực tiếp trong effect).
+  const computeWordCount = (html: string): number => {
+    const plainText = html.replace(/<[^>]*>/g, ' ');
+    return plainText.trim().length > 0 ? plainText.trim().split(/\s+/).length : 0;
+  };
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaved, setIsSaved] = useState<boolean>(true);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -73,6 +100,105 @@ export default function HomePage() {
   const excelSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const excelWorkbookRef = useRef<WorkBook | null>(null);
   const excelUtilsRef = useRef<XLSXUtils | null>(null);
+  // --- Kéo giãn/thu nhỏ độ rộng cột & chiều cao dòng trong Excel bằng chuột (hoặc chạm) ---
+  const EXCEL_COL_DEFAULT_WIDTH = 92;
+  const EXCEL_COL_MIN_WIDTH = 56;
+  const EXCEL_COL_MAX_WIDTH = 420;
+  const EXCEL_ROW_DEFAULT_HEIGHT = 30;
+  const EXCEL_ROW_MIN_HEIGHT = 22;
+  const EXCEL_ROW_MAX_HEIGHT = 140;
+  const [excelColWidths, setExcelColWidths] = useState<Record<string, number>>({});
+  const [excelRowHeights, setExcelRowHeights] = useState<Record<string, number>>({});
+  const [isResizingExcelCell, setIsResizingExcelCell] = useState<boolean>(false);
+  const excelResizeRef = useRef<{
+    type: 'col' | 'row';
+    index: number;
+    sheetIdx: number;
+    startPos: number;
+    startSize: number;
+  } | null>(null);
+
+  const getExcelColWidth = (sheetIdx: number, col: number): number =>
+    excelColWidths[`${sheetIdx}-${col}`] ?? EXCEL_COL_DEFAULT_WIDTH;
+
+  const getExcelRowHeight = (sheetIdx: number, row: number): number =>
+    excelRowHeights[`${sheetIdx}-${row}`] ?? EXCEL_ROW_DEFAULT_HEIGHT;
+
+  const startExcelColResize = (e: React.MouseEvent | React.TouchEvent, col: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX ?? 0 : e.clientX;
+    excelResizeRef.current = {
+      type: 'col',
+      index: col,
+      sheetIdx: activeSheet,
+      startPos: clientX,
+      startSize: getExcelColWidth(activeSheet, col),
+    };
+    setIsResizingExcelCell(true);
+  };
+
+  const startExcelRowResize = (e: React.MouseEvent | React.TouchEvent, row: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const clientY = 'touches' in e ? e.touches[0]?.clientY ?? 0 : e.clientY;
+    excelResizeRef.current = {
+      type: 'row',
+      index: row,
+      sheetIdx: activeSheet,
+      startPos: clientY,
+      startSize: getExcelRowHeight(activeSheet, row),
+    };
+    setIsResizingExcelCell(true);
+  };
+
+  useEffect(() => {
+    if (!isResizingExcelCell) return;
+
+    const applyDelta = (clientPos: number) => {
+      const info = excelResizeRef.current;
+      if (!info) return;
+      const delta = clientPos - info.startPos;
+      if (info.type === 'col') {
+        const next = Math.min(EXCEL_COL_MAX_WIDTH, Math.max(EXCEL_COL_MIN_WIDTH, Math.round(info.startSize + delta)));
+        setExcelColWidths((prev) => ({ ...prev, [`${info.sheetIdx}-${info.index}`]: next }));
+      } else {
+        const next = Math.min(EXCEL_ROW_MAX_HEIGHT, Math.max(EXCEL_ROW_MIN_HEIGHT, Math.round(info.startSize + delta)));
+        setExcelRowHeights((prev) => ({ ...prev, [`${info.sheetIdx}-${info.index}`]: next }));
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      applyDelta(excelResizeRef.current?.type === 'row' ? e.clientY : e.clientX);
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      e.preventDefault();
+      applyDelta(excelResizeRef.current?.type === 'row' ? e.touches[0].clientY : e.touches[0].clientX);
+    };
+    const stopResizing = () => {
+      excelResizeRef.current = null;
+      setIsResizingExcelCell(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', stopResizing);
+    document.addEventListener('touchcancel', stopResizing);
+    document.body.style.cursor = excelResizeRef.current?.type === 'row' ? 'row-resize' : 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', stopResizing);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', stopResizing);
+      document.removeEventListener('touchcancel', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingExcelCell]);
 
   // Chuyển chỉ số cột (0-based) thành chữ cái kiểu Excel: 0->A, 25->Z, 26->AA...
   const colLetter = (n: number): string => {
@@ -108,6 +234,77 @@ export default function HomePage() {
     return file.type || 'text';
   };
 
+  // ---- Phát hiện định dạng file thật từ các byte đầu (chữ ký file) ----
+  // .docx thật là file ZIP (bắt đầu bằng "PK"); .doc cũ (OLE2) bắt đầu bằng chữ ký cố định khác.
+  // Dùng để phân biệt lỗi "không phải zip" là do file .doc cũ bị đổi tên đuôi, hay do lỗi khác.
+  const isZipSignature = (buf: ArrayBuffer): boolean => {
+    const bytes = new Uint8Array(buf.slice(0, 2));
+    return bytes[0] === 0x50 && bytes[1] === 0x4b; // 'P' 'K'
+  };
+
+  const isOle2Signature = (buf: ArrayBuffer): boolean => {
+    const bytes = new Uint8Array(buf.slice(0, 8));
+    const sig = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+    return sig.every((b, i) => bytes[i] === b);
+  };
+
+  /** Giải mã một số HTML entity cơ bản có thể xuất hiện trong text XML của docx */
+  const decodeXmlEntities = (text: string): string =>
+    text
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+
+  /**
+   * Trích nội dung chữ (không giữ định dạng phức tạp) từ header/footer thật của file .docx.
+   * Mammoth không hỗ trợ header/footer nên phải tự đọc trực tiếp từ các file XML bên trong .docx
+   * (word/header1.xml, word/footer1.xml...) bằng JSZip — thư viện này vốn đã có sẵn vì mammoth
+   * cũng dùng nó, nếu môi trường báo thiếu module thì chạy `npm install jszip`.
+   */
+  const extractDocxHeaderFooter = async (
+    arrayBuffer: ArrayBuffer
+  ): Promise<{ headerHtml: string; footerHtml: string }> => {
+    try {
+      const JSZipModule = await import('jszip');
+      const JSZip = JSZipModule.default;
+      const zip = await JSZip.loadAsync(arrayBuffer);
+
+      const extractParagraphsHtml = async (fileName: string): Promise<string> => {
+        const file = zip.file(fileName);
+        if (!file) return '';
+        const xml = await file.async('text');
+        const paragraphs = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
+        const lines = paragraphs
+          .map((p) => {
+            const runs = p.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
+            const text = runs
+              .map((r) => decodeXmlEntities(r.replace(/<w:t[^>]*>/, '').replace(/<\/w:t>/, '')))
+              .join('');
+            return text;
+          })
+          .filter((line) => line.trim().length > 0);
+        return lines.map((line) => `<p>${line}</p>`).join('');
+      };
+
+      // Ưu tiên header/footer mặc định (header1/footer1); dự phòng header2/3 nếu tài liệu dùng section khác
+      const headerHtml =
+        (await extractParagraphsHtml('word/header1.xml')) ||
+        (await extractParagraphsHtml('word/header2.xml')) ||
+        (await extractParagraphsHtml('word/header3.xml'));
+      const footerHtml =
+        (await extractParagraphsHtml('word/footer1.xml')) ||
+        (await extractParagraphsHtml('word/footer2.xml')) ||
+        (await extractParagraphsHtml('word/footer3.xml'));
+
+      return { headerHtml, footerHtml };
+    } catch (err) {
+      console.error('Không thể đọc header/footer của file:', err);
+      return { headerHtml: '', footerHtml: '' };
+    }
+  };
+
   // Tải & chuyển đổi file Word (.docx) — giữ nguyên logic gốc
   useEffect(() => {
     if (!selectedFile) return;
@@ -119,7 +316,31 @@ export default function HomePage() {
     const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
 
     const loadDocument = async () => {
-      if (isSubscribed) setIsLoading(true);
+      if (isSubscribed) {
+        setIsLoading(true);
+        setWordZoom(100);
+        setWordHeaderHtml('');
+        setWordFooterHtml('');
+      }
+
+      // Tải file gốc 1 lần duy nhất — dùng để đọc Header/Footer thật, và tái sử dụng luôn
+      // cho mammoth nếu chưa có nội dung thân bài đã lưu (tránh fetch lại 2 lần).
+      let originalArrayBuffer: ArrayBuffer | null = null;
+      try {
+        const res = await fetch(selectedFile.path!);
+        if (res.ok) {
+          originalArrayBuffer = await res.arrayBuffer();
+          if (isZipSignature(originalArrayBuffer)) {
+            const { headerHtml, footerHtml } = await extractDocxHeaderFooter(originalArrayBuffer);
+            if (isSubscribed) {
+              setWordHeaderHtml(headerHtml);
+              setWordFooterHtml(footerHtml);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Không thể tải file gốc để đọc header/footer:', err);
+      }
 
       try {
         const cloudRes = await fetch(`/api/document-data?key=${encodeURIComponent(docKey)}`);
@@ -128,6 +349,7 @@ export default function HomePage() {
         if (cloudData && cloudData.content) {
           if (isSubscribed) {
             setHtmlContent(cloudData.content);
+            setWordCount(computeWordCount(cloudData.content));
             setIsSaved(true);
             setIsLoading(false);
           }
@@ -138,32 +360,47 @@ export default function HomePage() {
         if (savedLocal) {
           if (isSubscribed) {
             setHtmlContent(savedLocal);
+            setWordCount(computeWordCount(savedLocal));
             setIsSaved(true);
             setIsLoading(false);
           }
           return;
         }
 
-        const res = await fetch(selectedFile.path!);
-        if (!res.ok) throw new Error('Không thể tải file gốc');
+        if (!originalArrayBuffer) throw new Error('Không thể tải file gốc');
 
-        const arrayBuffer = await res.arrayBuffer();
         const mammoth = await import('mammoth');
-        const result = await mammoth.convertToHtml({ arrayBuffer });
+        const result = await mammoth.convertToHtml({ arrayBuffer: originalArrayBuffer });
 
         if (isSubscribed) {
           setHtmlContent(result.value);
+          setWordCount(computeWordCount(result.value));
           setIsSaved(true);
         }
       } catch (err) {
         console.error('Lỗi tải tài liệu:', err);
         if (isSubscribed) {
-          setHtmlContent(`
-            <div style="padding: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 15px; border-radius: 8px; font-family: 'Times New Roman', Times, serif; font-size: 13pt;">
-              ⚠️ <b>Lưu ý:</b> File gốc có cấu trúc mã nguồn cũ. Hệ thống đã mở chế độ soạn thảo trực tiếp. Bạn có thể nhập nội dung hoặc chỉnh sửa bình thường, dữ liệu sẽ tự động lưu lại.
-            </div>
-            <p style="font-family: 'Times New Roman', Times, serif; font-size: 13pt;">Nhập nội dung biểu mẫu tại đây...</p>
-          `);
+          // Phân biệt rõ nguyên nhân: file .doc cũ bị đổi tên đuôi thành .docx (không phải file zip thật)
+          // so với các lỗi khác — để đưa ra hướng khắc phục chính xác thay vì thông báo chung chung.
+          const isOldDocRenamed = originalArrayBuffer ? isOle2Signature(originalArrayBuffer) : false;
+
+          const fallbackHtml = isOldDocRenamed
+            ? `
+              <div style="padding: 12px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; margin-bottom: 15px; border-radius: 8px; font-family: 'Times New Roman', Times, serif; font-size: 13pt;">
+                ⚠️ <b>Không đọc được file:</b> Đây là file Word định dạng cũ (.doc, trước Word 2007) đã được đổi tên đuôi thành ".docx", nhưng nội dung bên trong CHƯA thực sự được chuyển đổi định dạng. Hệ thống chỉ đọc được file .docx thật (Word 2007 trở lên, bản chất là file .zip).
+                <br/><br/>
+                <b>Cách khắc phục:</b> Mở file gốc bằng Microsoft Word → menu "Tệp" → "Lưu dưới dạng khác" (Save As) → chọn định dạng "Word Document (*.docx)" → Lưu lại, sau đó tải file .docx thật này lên hệ thống thay cho file cũ.
+              </div>
+              <p style="font-family: 'Times New Roman', Times, serif; font-size: 13pt;">Nhập nội dung biểu mẫu tại đây...</p>
+            `
+            : `
+              <div style="padding: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 15px; border-radius: 8px; font-family: 'Times New Roman', Times, serif; font-size: 13pt;">
+                ⚠️ <b>Lưu ý:</b> File gốc có cấu trúc mã nguồn cũ. Hệ thống đã mở chế độ soạn thảo trực tiếp. Bạn có thể nhập nội dung hoặc chỉnh sửa bình thường, dữ liệu sẽ tự động lưu lại.
+              </div>
+              <p style="font-family: 'Times New Roman', Times, serif; font-size: 13pt;">Nhập nội dung biểu mẫu tại đây...</p>
+            `;
+          setHtmlContent(fallbackHtml);
+          setWordCount(computeWordCount(fallbackHtml));
           setIsSaved(true);
         }
       } finally {
@@ -197,6 +434,8 @@ export default function HomePage() {
         setExcelSheets([]);
         setSelectedCell(null);
         setIsExcelSaved(true);
+        setExcelColWidths({});
+        setExcelRowHeights({});
       }
 
       try {
@@ -363,12 +602,65 @@ export default function HomePage() {
     }, 500);
   };
 
+  // --- Kéo giãn/thu nhỏ độ rộng cột bảng trong tài liệu Word bằng chuột (hoặc chạm) ---
+  const WORD_TABLE_COL_MIN_WIDTH = 30;
+  const WORD_TABLE_RESIZE_EDGE_PX = 6; // khoảng cách tới viền phải ô để bắt đầu kéo
+  const [isResizingWordTableCol, setIsResizingWordTableCol] = useState<boolean>(false);
+  const wordTableResizeRef = useRef<{
+    table: HTMLTableElement;
+    colIndex: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  /** Nhấn gần viền phải 1 ô trong bảng (td/th) để bắt đầu kéo giãn cột đó */
+  const handleEditorMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const cell = target.closest('td, th') as HTMLTableCellElement | null;
+    if (!cell) return;
+    const table = cell.closest('table');
+    if (!table) return;
+
+    const rect = cell.getBoundingClientRect();
+    const distanceFromRightEdge = rect.right - e.clientX;
+    if (distanceFromRightEdge > WORD_TABLE_RESIZE_EDGE_PX || distanceFromRightEdge < -2) return;
+
+    e.preventDefault();
+    wordTableResizeRef.current = {
+      table,
+      colIndex: cell.cellIndex,
+      startX: e.clientX,
+      startWidth: rect.width,
+    };
+    setIsResizingWordTableCol(true);
+  };
+
+  /** Đổi con trỏ chuột thành col-resize khi rê gần viền phải 1 ô trong bảng, để người dùng biết có thể kéo */
+  const handleEditorMouseMoveHover = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isResizingWordTableCol || !editorRef.current) return;
+    const target = e.target as HTMLElement;
+    const cell = target.closest('td, th') as HTMLTableCellElement | null;
+    if (!cell) {
+      editorRef.current.style.cursor = '';
+      return;
+    }
+    const rect = cell.getBoundingClientRect();
+    const distanceFromRightEdge = rect.right - e.clientX;
+    editorRef.current.style.cursor =
+      distanceFromRightEdge <= WORD_TABLE_RESIZE_EDGE_PX && distanceFromRightEdge >= -2 ? 'col-resize' : '';
+  };
+
   const handleInput = () => {
     if (!selectedFile || !editorRef.current) return;
     setIsSaved(false);
 
     const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
     const newContent = editorRef.current.innerHTML;
+
+    // Đếm số từ thực tế trong nội dung hiện tại (chỉ hiển thị ở status bar, không ảnh hưởng lưu trữ)
+    const plainText = editorRef.current.innerText || '';
+    const words = plainText.trim().length > 0 ? plainText.trim().split(/\s+/).length : 0;
+    setWordCount(words);
 
     localStorage.setItem(docKey, newContent);
 
@@ -387,6 +679,55 @@ export default function HomePage() {
       }
     }, 800);
   };
+
+  // Hiệu ứng kéo giãn cột bảng Word — đặt SAU handleInput để tham chiếu đúng thứ tự khai báo
+  useEffect(() => {
+    if (!isResizingWordTableCol) return;
+
+    const applyWidth = (clientX: number) => {
+      const info = wordTableResizeRef.current;
+      if (!info) return;
+      const delta = clientX - info.startX;
+      const newWidth = Math.max(WORD_TABLE_COL_MIN_WIDTH, Math.round(info.startWidth + delta));
+      const rows = info.table.rows;
+      for (let i = 0; i < rows.length; i++) {
+        const c = rows[i].cells[info.colIndex];
+        if (c) c.style.width = `${newWidth}px`;
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => applyWidth(e.clientX);
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      e.preventDefault();
+      applyWidth(e.touches[0].clientX);
+    };
+    const stopResizing = () => {
+      wordTableResizeRef.current = null;
+      setIsResizingWordTableCol(false);
+      // Lưu lại độ rộng cột vừa đổi bằng đúng luồng autosave hiện có (local + debounce cloud)
+      handleInput();
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', stopResizing);
+    document.addEventListener('touchcancel', stopResizing);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', stopResizing);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', stopResizing);
+      document.removeEventListener('touchcancel', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isResizingWordTableCol]);
 
   // ---- Ribbon: lưu / khôi phục vùng bôi đen khi bấm nút hoặc mở dropdown ----
   const saveSelection = () => {
@@ -425,10 +766,71 @@ export default function HomePage() {
     }
   };
 
+  // Phím tắt Ctrl+K (hoặc Cmd+K trên macOS) — focus vào ô tìm kiếm tài liệu ở Header
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        headerSearchRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+
   useEffect(() => {
     document.addEventListener('selectionchange', refreshActiveFormats);
     return () => document.removeEventListener('selectionchange', refreshActiveFormats);
   }, []);
+
+  // Xử lý kéo thanh chia để thay đổi chiều rộng sidebar (chuột trên desktop, chạm trên di động/tablet)
+  const handleSidebarResizeStart = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+  };
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+
+    const updateWidthFromClientX = (clientX: number) => {
+      if (!sidebarRef.current) return;
+      const rect = sidebarRef.current.getBoundingClientRect();
+      const nextWidth = clientX - rect.left;
+      // Trên màn hình nhỏ, không cho kéo rộng hơn khoảng trống thực tế còn lại
+      const viewportCap = typeof window !== 'undefined' ? window.innerWidth - 24 : SIDEBAR_MAX_WIDTH;
+      const clamped = Math.min(SIDEBAR_MAX_WIDTH, viewportCap, Math.max(SIDEBAR_MIN_WIDTH, nextWidth));
+      setSidebarWidth(clamped);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => updateWidthFromClientX(e.clientX);
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      // Chặn cuộn trang khi đang kéo bằng ngón tay
+      e.preventDefault();
+      updateWidthFromClientX(e.touches[0].clientX);
+    };
+    const stopResizing = () => setIsResizingSidebar(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', stopResizing);
+    document.addEventListener('touchcancel', stopResizing);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', stopResizing);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', stopResizing);
+      document.removeEventListener('touchcancel', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingSidebar]);
+
 
   // Chạy 1 lệnh định dạng chuẩn của trình duyệt (execCommand) trên vùng đang chọn
   const execFormat = (command: string, value?: string) => {
@@ -479,10 +881,18 @@ export default function HomePage() {
 
       const res = await fetch(selectedFile.path);
       const arrayBuffer = await res.arrayBuffer();
+
+      if (isZipSignature(arrayBuffer)) {
+        const { headerHtml, footerHtml } = await extractDocxHeaderFooter(arrayBuffer);
+        setWordHeaderHtml(headerHtml);
+        setWordFooterHtml(footerHtml);
+      }
+
       const mammoth = await import('mammoth');
       const result = await mammoth.convertToHtml({ arrayBuffer });
 
       setHtmlContent(result.value);
+      setWordCount(computeWordCount(result.value));
       if (editorRef.current) {
         editorRef.current.innerHTML = result.value;
       }
@@ -496,6 +906,29 @@ export default function HomePage() {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  // Tải file gốc (đưa từ FolderTree lên thanh công cụ tài liệu Word) — giữ nguyên logic gốc
+  const handleDownloadWord = () => {
+    if (!selectedFile?.path) {
+      alert('Vui lòng chọn 1 file biểu mẫu/tài liệu để tải về!');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = selectedFile.path;
+    link.download = selectedFile.fileName || `${selectedFile.title}.docx`;
+    link.click();
+  };
+
+  const handleDownloadPdf = () => {
+    if (!selectedFile?.path) {
+      alert('Vui lòng chọn 1 file để tải PDF!');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = selectedFile.path;
+    link.download = selectedFile.fileName || `${selectedFile.title}.pdf`;
+    link.click();
   };
 
   // ---- Chỉnh sửa trực tiếp bảng tính Excel (kiểu giống Excel) + tự động lưu ----
@@ -1018,6 +1451,37 @@ export default function HomePage() {
         <path d="M9.2 12.2l1.9 1.9 3.7-3.9" />
       </svg>
     ),
+    Search: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <circle cx="11" cy="11" r="6.5" />
+        <path d="m20 20-4.3-4.3" />
+      </svg>
+    ),
+    Download: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <path d="M12 4v11m0 0-3.5-3.5M12 15l3.5-3.5" />
+        <path d="M5 17.5v1.7a1.3 1.3 0 0 0 1.3 1.3h11.4a1.3 1.3 0 0 0 1.3-1.3v-1.7" />
+      </svg>
+    ),
+    Pdf: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <path d="M6.5 3.5h7L18.5 8v12.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z" />
+        <path d="M13.2 3.5V8h5" />
+        <text x="7.3" y="17" fontSize="6.2" fontWeight="700" fill="currentColor" stroke="none" fontFamily="Inter, sans-serif">PDF</text>
+      </svg>
+    ),
+    ZoomOut: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m20 20-4.35-4.35M8 10.5h5" />
+      </svg>
+    ),
+    ZoomIn: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m20 20-4.35-4.35M10.5 8v5M8 10.5h5" />
+      </svg>
+    ),
   };
 
   const RibbonBtn = ({
@@ -1369,9 +1833,19 @@ export default function HomePage() {
                     {Array.from({ length: activeSheetData.endCol - activeSheetData.startCol + 1 }, (_, i) => activeSheetData.startCol + i).map((c) => (
                       <th
                         key={c}
-                        className="sticky top-0 z-20 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 px-2 h-6 min-w-[92px] max-w-[92px]"
+                        style={{ width: getExcelColWidth(activeSheet, c) }}
+                        className="relative sticky top-0 z-20 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 px-2 h-6"
                       >
                         {colLetter(c)}
+                        {/* Tay kéo giãn độ rộng cột — chuột hoặc chạm */}
+                        <div
+                          onMouseDown={(e) => startExcelColResize(e, c)}
+                          onTouchStart={(e) => startExcelColResize(e, c)}
+                          title="Kéo để đổi độ rộng cột"
+                          className="absolute top-0 right-0 h-full w-2 -mr-1 cursor-col-resize z-30 touch-none group/handle"
+                        >
+                          <div className="h-full w-px mx-auto bg-transparent group-hover/handle:bg-teal-400" />
+                        </div>
                       </th>
                     ))}
                   </tr>
@@ -1379,10 +1853,23 @@ export default function HomePage() {
                 <tbody>
                   {activeSheetData.rows.map((rowCells) => {
                     const absRow = rowCells[0]?.r ?? 0;
+                    const rowHeight = getExcelRowHeight(activeSheet, absRow);
                     return (
-                      <tr key={absRow}>
-                        <td className="sticky left-0 z-10 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 text-center w-11">
+                      <tr key={absRow} style={{ height: rowHeight }}>
+                        <td
+                          style={{ height: rowHeight }}
+                          className="relative sticky left-0 z-10 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 text-center w-11"
+                        >
                           {absRow + 1}
+                          {/* Tay kéo giãn chiều cao dòng — chuột hoặc chạm */}
+                          <div
+                            onMouseDown={(e) => startExcelRowResize(e, absRow)}
+                            onTouchStart={(e) => startExcelRowResize(e, absRow)}
+                            title="Kéo để đổi chiều cao dòng"
+                            className="absolute bottom-0 left-0 w-full h-2 -mb-1 cursor-row-resize z-30 touch-none group/handle"
+                          >
+                            <div className="w-full h-px my-auto bg-transparent group-hover/handle:bg-teal-400" />
+                          </div>
                         </td>
                         {rowCells.map((cell) => {
                           const key = `${cell.r}-${cell.c}`;
@@ -1429,8 +1916,10 @@ export default function HomePage() {
                                 color: cell.style?.color || undefined,
                                 backgroundColor: !isSelected ? cell.style?.bg || undefined : undefined,
                                 fontSize: cell.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
+                                width: getExcelColWidth(activeSheet, cell.c),
+                                height: rowHeight,
                               }}
-                              className={`border px-2 py-1 text-[12.5px] align-top whitespace-normal break-words cursor-text min-w-[92px] max-w-[280px] outline-none focus:bg-amber-50/60 ${
+                              className={`border px-2 py-1 text-[12.5px] align-top whitespace-normal break-words overflow-hidden cursor-text outline-none focus:bg-amber-50/60 ${
                                 isSelected
                                   ? 'border-teal-600 ring-2 ring-inset ring-teal-600 bg-teal-50/70'
                                   : 'border-slate-200 hover:bg-slate-50'
@@ -1509,137 +1998,251 @@ export default function HomePage() {
                 <Icon.Refresh className="w-3.5 h-3.5 transition-transform duration-500 group-hover:rotate-180" />
                 Đặt lại mẫu gốc
               </button>
+
+              <div className="w-px h-6 bg-slate-200 mx-0.5" />
+
+              <button
+                onClick={handleDownloadWord}
+                title="Tải file Word hiện tại"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
+              >
+                <Icon.Download className="w-3.5 h-3.5" />
+                Word
+              </button>
+              <button
+                onClick={handleDownloadPdf}
+                title="Tải / Xuất file PDF"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
+              >
+                <Icon.Pdf className="w-3.5 h-3.5" />
+                PDF
+              </button>
               <button
                 onClick={handlePrint}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-white bg-teal-700 hover:bg-teal-600 rounded-xl shadow-sm shadow-teal-900/20 transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
+                title="In tài liệu hiện tại"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
               >
                 <Icon.Print className="w-3.5 h-3.5" />
-                In / Trích xuất PDF
+                In File
               </button>
             </div>
           </div>
 
           {/* THANH CÔNG CỤ ĐỊNH DẠNG (RIBBON) — kiểu Word */}
           {!isLoading && (
-            <div className="bg-[#F8FAF9] border-b border-slate-200/70 px-3 py-2 flex items-center gap-1 overflow-x-auto no-scrollbar print:hidden shrink-0 animate-slideDown">
-              <RibbonBtn title="Hoàn tác" onClick={() => execFormat('undo')}>
-                <Icon.Undo className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Làm lại" onClick={() => execFormat('redo')}>
-                <Icon.Redo className="w-4 h-4" />
-              </RibbonBtn>
+            <div className="bg-[#F8FAF9] border-b border-slate-200/70 px-3 pt-1.5 pb-1 flex items-start gap-2.5 overflow-x-auto no-scrollbar print:hidden shrink-0 animate-slideDown">
+              {/* Nhóm: Hoàn tác */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <RibbonBtn title="Hoàn tác" onClick={() => execFormat('undo')}>
+                    <Icon.Undo className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Làm lại" onClick={() => execFormat('redo')}>
+                    <Icon.Redo className="w-4 h-4" />
+                  </RibbonBtn>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Hoàn tác</span>
+              </div>
 
-              <div className="w-px h-6 bg-slate-200 mx-1.5 shrink-0" />
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              <select
-                title="Phông chữ"
-                aria-label="Phông chữ"
-                defaultValue="Times New Roman"
-                onMouseDown={saveSelection}
-                onChange={(e) => execFormat('fontName', e.target.value)}
-                className="h-8 px-2 text-[12.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20 max-w-[110px]"
-              >
-                <option value="Times New Roman">Times New Roman</option>
-                <option value="Arial">Arial</option>
-                <option value="Calibri">Calibri</option>
-                <option value="Verdana">Verdana</option>
-                <option value="Georgia">Georgia</option>
-              </select>
+              {/* Nhóm: Phông chữ */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <select
+                    title="Phông chữ"
+                    aria-label="Phông chữ"
+                    defaultValue="Times New Roman"
+                    onMouseDown={saveSelection}
+                    onChange={(e) => execFormat('fontName', e.target.value)}
+                    className="h-8 px-2 text-[12.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20 max-w-[110px]"
+                  >
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Calibri">Calibri</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Georgia">Georgia</option>
+                  </select>
 
-              <select
-                title="Cỡ chữ"
-                aria-label="Cỡ chữ"
-                defaultValue="13"
-                onMouseDown={saveSelection}
-                onChange={(e) => applyFontSize(e.target.value)}
-                className="h-8 px-2 text-[12.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20 w-[60px]"
-              >
-                {['8', '9', '10', '11', '12', '13', '14', '16', '18', '20', '24', '28', '32', '36', '40'].map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
+                  <select
+                    title="Cỡ chữ"
+                    aria-label="Cỡ chữ"
+                    defaultValue="13"
+                    onMouseDown={saveSelection}
+                    onChange={(e) => applyFontSize(e.target.value)}
+                    className="h-8 px-2 text-[12.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20 w-[60px]"
+                  >
+                    {['8', '9', '10', '11', '12', '13', '14', '16', '18', '20', '24', '28', '32', '36', '40'].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Phông chữ</span>
+              </div>
 
-              <select
-                title="Kiểu văn bản"
-                aria-label="Kiểu văn bản"
-                value={currentBlock || 'p'}
-                onMouseDown={saveSelection}
-                onChange={(e) => applyHeading(e.target.value)}
-                className="h-8 px-2 text-[12.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20 max-w-[110px]"
-              >
-                <option value="p">Normal</option>
-                <option value="h1">Heading 1</option>
-                <option value="h2">Heading 2</option>
-                <option value="h3">Heading 3</option>
-                <option value="blockquote">Quote</option>
-              </select>
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              <div className="w-px h-6 bg-slate-200 mx-1.5 shrink-0" />
+              {/* Nhóm: Định dạng chữ + màu */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <RibbonBtn title="In đậm" active={activeFormats.bold} onClick={() => execFormat('bold')}>
+                    <Icon.Bold className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="In nghiêng" active={activeFormats.italic} onClick={() => execFormat('italic')}>
+                    <Icon.Italic className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Gạch chân" active={activeFormats.underline} onClick={() => execFormat('underline')}>
+                    <Icon.Underline className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Gạch ngang" active={activeFormats.strikeThrough} onClick={() => execFormat('strikeThrough')}>
+                    <Icon.Strike className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Màu chữ" onClick={() => { saveSelection(); colorInputRef.current?.click(); }}>
+                    <Icon.TextColor className="w-4 h-4" />
+                  </RibbonBtn>
+                  <input
+                    ref={colorInputRef}
+                    type="color"
+                    className="hidden"
+                    onChange={(e) => applyColor('foreColor', e.target.value)}
+                    aria-label="Chọn màu chữ"
+                  />
+                  <RibbonBtn title="Tô sáng" onClick={() => { saveSelection(); highlightInputRef.current?.click(); }}>
+                    <Icon.Highlight className="w-4 h-4" />
+                  </RibbonBtn>
+                  <input
+                    ref={highlightInputRef}
+                    type="color"
+                    defaultValue="#fef08a"
+                    className="hidden"
+                    onChange={(e) => applyColor('hiliteColor', e.target.value)}
+                    aria-label="Chọn màu tô sáng"
+                  />
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Định dạng</span>
+              </div>
 
-              <RibbonBtn title="In đậm" active={activeFormats.bold} onClick={() => execFormat('bold')}>
-                <Icon.Bold className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="In nghiêng" active={activeFormats.italic} onClick={() => execFormat('italic')}>
-                <Icon.Italic className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Gạch chân" active={activeFormats.underline} onClick={() => execFormat('underline')}>
-                <Icon.Underline className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Gạch ngang" active={activeFormats.strikeThrough} onClick={() => execFormat('strikeThrough')}>
-                <Icon.Strike className="w-4 h-4" />
-              </RibbonBtn>
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              <RibbonBtn title="Màu chữ" onClick={() => { saveSelection(); colorInputRef.current?.click(); }}>
-                <Icon.TextColor className="w-4 h-4" />
-              </RibbonBtn>
-              <input
-                ref={colorInputRef}
-                type="color"
-                className="hidden"
-                onChange={(e) => applyColor('foreColor', e.target.value)}
-                aria-label="Chọn màu chữ"
-              />
-              <RibbonBtn title="Tô sáng" onClick={() => { saveSelection(); highlightInputRef.current?.click(); }}>
-                <Icon.Highlight className="w-4 h-4" />
-              </RibbonBtn>
-              <input
-                ref={highlightInputRef}
-                type="color"
-                defaultValue="#fef08a"
-                className="hidden"
-                onChange={(e) => applyColor('hiliteColor', e.target.value)}
-                aria-label="Chọn màu tô sáng"
-              />
+              {/* Nhóm: Căn lề + danh sách */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <RibbonBtn title="Căn trái" active={activeFormats.justifyLeft} onClick={() => execFormat('justifyLeft')}>
+                    <Icon.AlignLeft className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Căn giữa" active={activeFormats.justifyCenter} onClick={() => execFormat('justifyCenter')}>
+                    <Icon.AlignCenter className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Căn phải" active={activeFormats.justifyRight} onClick={() => execFormat('justifyRight')}>
+                    <Icon.AlignRight className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Căn đều" active={activeFormats.justifyFull} onClick={() => execFormat('justifyFull')}>
+                    <Icon.AlignJustify className="w-4 h-4" />
+                  </RibbonBtn>
+                  <div className="w-px h-6 bg-slate-200 mx-0.5 shrink-0" />
+                  <RibbonBtn title="Danh sách chấm" active={activeFormats.insertUnorderedList} onClick={() => execFormat('insertUnorderedList')}>
+                    <Icon.ListBullet className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Danh sách số" active={activeFormats.insertOrderedList} onClick={() => execFormat('insertOrderedList')}>
+                    <Icon.ListNumber className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Giảm thụt lề" onClick={() => execFormat('outdent')}>
+                    <Icon.Outdent className="w-4 h-4" />
+                  </RibbonBtn>
+                  <RibbonBtn title="Tăng thụt lề" onClick={() => execFormat('indent')}>
+                    <Icon.Indent className="w-4 h-4" />
+                  </RibbonBtn>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Đoạn văn</span>
+              </div>
 
-              <div className="w-px h-6 bg-slate-200 mx-1.5 shrink-0" />
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              <RibbonBtn title="Căn trái" active={activeFormats.justifyLeft} onClick={() => execFormat('justifyLeft')}>
-                <Icon.AlignLeft className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Căn giữa" active={activeFormats.justifyCenter} onClick={() => execFormat('justifyCenter')}>
-                <Icon.AlignCenter className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Căn phải" active={activeFormats.justifyRight} onClick={() => execFormat('justifyRight')}>
-                <Icon.AlignRight className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Căn đều" active={activeFormats.justifyFull} onClick={() => execFormat('justifyFull')}>
-                <Icon.AlignJustify className="w-4 h-4" />
-              </RibbonBtn>
+              {/* Nhóm: Style Gallery — thay cho <select> kiểu văn bản, vẫn gọi đúng applyHeading() như cũ */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      { tag: 'p', label: 'Bình thường', preview: 'text-[10px] font-medium' },
+                      { tag: 'h1', label: 'Tiêu đề 1', preview: 'text-[13px] font-bold' },
+                      { tag: 'h2', label: 'Tiêu đề 2', preview: 'text-[12px] font-bold' },
+                      { tag: 'h3', label: 'Tiêu đề 3', preview: 'text-[11px] font-semibold' },
+                      { tag: 'blockquote', label: 'Trích dẫn', preview: 'text-[10px] italic' },
+                    ] as const
+                  ).map((style) => {
+                    const isActive = (currentBlock || 'p') === style.tag;
+                    return (
+                      <button
+                        key={style.tag}
+                        type="button"
+                        title={style.label}
+                        aria-label={style.label}
+                        aria-pressed={isActive}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          saveSelection();
+                        }}
+                        onClick={() => applyHeading(style.tag)}
+                        className={`flex flex-col items-center justify-center w-[52px] h-9 rounded-lg border shrink-0 transition-colors duration-150 cursor-pointer ${
+                          isActive
+                            ? 'bg-teal-700 border-teal-700 text-white shadow-sm shadow-teal-900/20'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={`leading-none ${style.preview}`}>Aa</span>
+                        <span className="text-[7.5px] font-semibold mt-0.5 truncate w-full text-center px-0.5 leading-tight">
+                          {style.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Kiểu văn bản</span>
+              </div>
+            </div>
+          )}
 
-              <div className="w-px h-6 bg-slate-200 mx-1.5 shrink-0" />
-
-              <RibbonBtn title="Danh sách chấm" active={activeFormats.insertUnorderedList} onClick={() => execFormat('insertUnorderedList')}>
-                <Icon.ListBullet className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Danh sách số" active={activeFormats.insertOrderedList} onClick={() => execFormat('insertOrderedList')}>
-                <Icon.ListNumber className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Giảm thụt lề" onClick={() => execFormat('outdent')}>
-                <Icon.Outdent className="w-4 h-4" />
-              </RibbonBtn>
-              <RibbonBtn title="Tăng thụt lề" onClick={() => execFormat('indent')}>
-                <Icon.Indent className="w-4 h-4" />
-              </RibbonBtn>
+          {/* Thanh trạng thái tài liệu Word: số từ + zoom thật (không phải trang trí) */}
+          {!isLoading && (
+            <div className="bg-white border-b border-slate-200/70 px-4 py-1 flex items-center justify-between text-[11px] text-slate-400 font-medium shrink-0 print:hidden">
+              <span>{wordCount.toLocaleString('vi-VN')} từ</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setWordZoom((z) => Math.max(WORD_ZOOM_MIN, z - WORD_ZOOM_STEP))}
+                  disabled={wordZoom <= WORD_ZOOM_MIN}
+                  aria-label="Thu nhỏ"
+                  title="Thu nhỏ"
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-teal-700 hover:bg-teal-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <Icon.ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  type="range"
+                  min={WORD_ZOOM_MIN}
+                  max={WORD_ZOOM_MAX}
+                  step={WORD_ZOOM_STEP}
+                  value={wordZoom}
+                  onChange={(e) => setWordZoom(Number(e.target.value))}
+                  aria-label="Mức thu phóng tài liệu"
+                  className="w-24 accent-teal-600 cursor-pointer"
+                />
+                <button
+                  onClick={() => setWordZoom((z) => Math.min(WORD_ZOOM_MAX, z + WORD_ZOOM_STEP))}
+                  disabled={wordZoom >= WORD_ZOOM_MAX}
+                  aria-label="Phóng to"
+                  title="Phóng to"
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-teal-700 hover:bg-teal-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <Icon.ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setWordZoom(100)}
+                  title="Đặt lại mức thu phóng 100%"
+                  className="w-12 text-center font-mono text-[10.5px] text-slate-500 hover:text-teal-700 cursor-pointer"
+                >
+                  {wordZoom}%
+                </button>
+              </div>
             </div>
           )}
 
@@ -1662,23 +2265,56 @@ export default function HomePage() {
               </div>
             ) : (
               <div
-                ref={editorRef}
-                onMouseUp={refreshActiveFormats}
-                onKeyUp={refreshActiveFormats}
-                contentEditable
-                suppressContentEditableWarning
-                spellCheck={false}
-                onInput={handleInput}
-                dangerouslySetInnerHTML={{ __html: htmlContent }}
-                className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto w-[210mm] max-w-none shrink-0 outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm mb-12 self-start transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
-                style={{
-                  boxSizing: 'border-box',
-                  wordBreak: 'break-word',
-                  fontFamily: '"Times New Roman", Times, serif',
-                  fontSize: '13pt',
-                  lineHeight: '1.4',
-                }}
-              />
+                className="flex flex-col w-[210mm] max-w-full shrink-0 self-start mb-12"
+                style={{ zoom: `${wordZoom}%` } as React.CSSProperties}
+              >
+                {/* Header thật của file .docx — chỉ xem, mammoth không hỗ trợ chỉnh sửa phần này */}
+                {wordHeaderHtml && (
+                  <div
+                    className="bg-slate-50/70 border border-b-0 border-slate-200 rounded-t-sm px-16 pt-4 pb-3 text-center text-slate-500 text-[10.5pt] italic [&_p]:my-0.5 print:bg-white"
+                    style={{ fontFamily: '"Times New Roman", Times, serif' }}
+                    dangerouslySetInnerHTML={{ __html: wordHeaderHtml }}
+                  />
+                )}
+
+                <div
+                  ref={editorRef}
+                  onMouseUp={refreshActiveFormats}
+                  onKeyUp={refreshActiveFormats}
+                  onMouseDown={handleEditorMouseDown}
+                  onMouseMove={handleEditorMouseMoveHover}
+                  contentEditable
+                  suppressContentEditableWarning
+                  spellCheck={false}
+                  onInput={handleInput}
+                  dangerouslySetInnerHTML={{ __html: htmlContent }}
+                  className={`bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0 ${
+                    wordHeaderHtml && wordFooterHtml
+                      ? 'rounded-none'
+                      : wordHeaderHtml
+                        ? 'rounded-b-sm'
+                        : wordFooterHtml
+                          ? 'rounded-t-sm'
+                          : 'rounded-sm'
+                  }`}
+                  style={{
+                    boxSizing: 'border-box',
+                    wordBreak: 'break-word',
+                    fontFamily: '"Times New Roman", Times, serif',
+                    fontSize: '13pt',
+                    lineHeight: '1.4',
+                  }}
+                />
+
+                {/* Footer thật của file .docx — chỉ xem, mammoth không hỗ trợ chỉnh sửa phần này */}
+                {wordFooterHtml && (
+                  <div
+                    className="bg-slate-50/70 border border-t-0 border-slate-200 rounded-b-sm px-16 pt-3 pb-4 text-center text-slate-400 text-[9.5pt] italic [&_p]:my-0.5 print:bg-white"
+                    style={{ fontFamily: '"Times New Roman", Times, serif' }}
+                    dangerouslySetInnerHTML={{ __html: wordFooterHtml }}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1956,12 +2592,15 @@ export default function HomePage() {
 
           <div className="w-px h-6 bg-slate-200 hidden md:block" />
 
-          <div className="hidden md:flex items-center gap-1.5 text-[12px] font-semibold text-slate-500 min-w-0">
-            <Icon.Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="truncate">Bệnh viện Phong &ndash; Da liễu TW Quy Hòa</span>
+          {/* Tên bệnh viện — hiển thị nổi bật ở giữa header (thay cho vị trí ô tìm kiếm trước đây, ô tìm kiếm đã dời xuống thanh bên dưới) */}
+          <div className="flex-1 min-w-0 flex flex-col items-center justify-center text-center leading-tight px-2">
+            <p className="text-[13.5px] font-bold text-[#0E3A41] tracking-tight truncate max-w-full">
+              Bệnh viện Phong - Da liễu TW Quy Hòa
+            </p>
+            <p className="text-[11px] text-slate-400 font-medium truncate max-w-full">
+              Khoa Vi sinh - Miễn dịch
+            </p>
           </div>
-
-          <div className="flex-1" />
 
           {selectedFile && (
             <div className="hidden sm:flex items-center gap-1.5 text-[12px] font-medium text-slate-400 max-w-[240px] min-w-0">
@@ -2001,6 +2640,34 @@ export default function HomePage() {
           </button>
         </header>
 
+        {/* ---- THANH TÌM KIẾM (đã dời xuống từ giữa Header) ---- */}
+        <div className="h-12 shrink-0 bg-white border-b border-slate-200/80 flex items-center px-4 z-20 font-ui">
+          <div className="flex-1 min-w-0 max-w-2xl mx-auto relative">
+            <Icon.Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              ref={headerSearchRef}
+              type="text"
+              value={docSearchQuery}
+              onChange={(e) => setDocSearchQuery(e.target.value)}
+              placeholder="Tìm kiếm tài liệu, biểu mẫu, hồ sơ..."
+              className="w-full pl-10 pr-16 py-1.75 text-[13px] bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-teal-500/12 focus:border-teal-400 focus:bg-white transition-all duration-200 placeholder:text-slate-400"
+            />
+            {docSearchQuery ? (
+              <button
+                onClick={() => setDocSearchQuery('')}
+                aria-label="Xoá tìm kiếm"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <Icon.Close className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border border-slate-200 bg-white text-[10px] font-semibold text-slate-400 font-mono">
+                Ctrl K
+              </kbd>
+            )}
+          </div>
+        </div>
+
         {/* ---- THÂN CHÍNH: SIDEBAR + WORKSPACE ---- */}
         <div className="flex-1 min-h-0 flex overflow-hidden relative">
           {/* Lớp phủ nền cho drawer di động — chỉ hiển thị trên màn hình nhỏ khi sidebar mở */}
@@ -2008,19 +2675,23 @@ export default function HomePage() {
             <div
               onClick={() => setIsMobileSidebarOpen(false)}
               aria-hidden="true"
-              className="lg:hidden fixed inset-0 top-14 bg-slate-900/40 backdrop-blur-[1px] z-30 animate-veilFade"
+              className="lg:hidden fixed inset-0 top-[104px] bg-slate-900/40 backdrop-blur-[1px] z-30 animate-veilFade"
             />
           )}
 
           {/* ---- SIDEBAR ----
               Di động: drawer trượt từ trái, phủ (fixed), đóng bằng nút X hoặc chạm nền.
-              Desktop (lg+): nằm trong luồng bố cục, có thể thu gọn còn dải icon. */}
+              Desktop (lg+): nằm trong luồng bố cục, có thể thu gọn còn dải icon,
+              hoặc kéo giãn/thu nhỏ tự do bằng thanh chia ở viền phải. */}
           <aside
-            className={`bg-white border-r border-slate-200/80 flex flex-col overflow-hidden font-ui z-40
-              fixed left-0 top-14 bottom-0 w-[280px] transition-transform duration-200 ease-out
+            ref={sidebarRef}
+            style={{ '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
+            className={`relative bg-white border-r border-slate-200/80 flex flex-col overflow-hidden font-ui z-40
+              fixed left-0 top-[104px] bottom-0 w-[var(--sidebar-width)] transition-transform duration-200 ease-out
               ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-              lg:static lg:top-auto lg:bottom-auto lg:translate-x-0 lg:h-full lg:shrink-0 lg:transition-[width]
-              ${isSidebarCollapsed ? 'lg:w-[60px]' : 'lg:w-[280px]'}`}
+              lg:static lg:top-auto lg:bottom-auto lg:translate-x-0 lg:h-full lg:shrink-0
+              ${isResizingSidebar ? '' : 'transition-[width]'}
+              ${isSidebarCollapsed ? 'lg:w-[60px]' : ''}`}
           >
             <div className={`flex items-center justify-between px-3.5 py-3 border-b border-slate-100 shrink-0 ${isSidebarCollapsed ? 'lg:px-0 lg:justify-center' : ''}`}>
               <span className={`text-[11px] font-bold uppercase tracking-wider text-slate-400 ${isSidebarCollapsed ? 'lg:hidden' : ''}`}>
@@ -2050,15 +2721,37 @@ export default function HomePage() {
 
             {/* Vùng cây thư mục — giữ nguyên FolderTree/DocumentNode, chỉ bọc khung UI mới.
                 Không unmount khi thu gọn để không mất trạng thái nội bộ của FolderTree. */}
-            <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar min-w-[280px] lg:min-w-0 ${isSidebarCollapsed ? 'lg:opacity-0 lg:pointer-events-none lg:w-0' : 'opacity-100'}`}>
+            <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar min-w-[220px] lg:min-w-0 ${isSidebarCollapsed ? 'lg:opacity-0 lg:pointer-events-none lg:w-0' : 'opacity-100'}`}>
               <FolderTree
                 onSelectFile={(file) => {
                   setSelectedFile(file);
                   setIsMobileSidebarOpen(false);
                 }}
                 selectedFile={selectedFile}
+                searchQuery={docSearchQuery}
+                onSearchQueryChange={setDocSearchQuery}
               />
             </div>
+
+            {/* Thanh kéo giãn/thu nhỏ — hoạt động cả bằng chuột (desktop) lẫn chạm (di động/tablet),
+                ẩn khi sidebar đang thu gọn. Nhấp đúp (hoặc chạm giữ) để đặt lại độ rộng mặc định. */}
+            {!isSidebarCollapsed && (
+              <div
+                onMouseDown={handleSidebarResizeStart}
+                onTouchStart={handleSidebarResizeStart}
+                onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+                title="Kéo để thay đổi độ rộng danh mục"
+                role="separator"
+                aria-orientation="vertical"
+                className="flex absolute top-0 right-0 h-full w-4 -mr-2 lg:w-2.5 lg:-mr-1 cursor-col-resize items-stretch justify-center group z-10 touch-none"
+              >
+                <div
+                  className={`h-full w-px transition-colors duration-150 ${
+                    isResizingSidebar ? 'bg-teal-500' : 'bg-transparent group-hover:bg-teal-400'
+                  }`}
+                />
+              </div>
+            )}
           </aside>
 
           {/* ---- WORKSPACE ---- */}
@@ -2102,6 +2795,10 @@ export default function HomePage() {
                 Đã kết nối
               </span>
               <span className="hidden md:inline shrink-0">Quản trị viên</span>
+              <div className="w-px h-3.5 bg-slate-200 shrink-0 hidden md:block" />
+              <span className="hidden md:inline shrink-0 text-slate-400 truncate">
+                © 2026 Khoa Vi sinh - Miễn dịch, Bệnh viện Phong - Da liễu TW Quy Hòa
+              </span>
             </div>
           </main>
         </div>
