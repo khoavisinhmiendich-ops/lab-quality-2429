@@ -40,12 +40,17 @@ export default function HomePage() {
   const WORD_ZOOM_MAX = 150;
   const WORD_ZOOM_STEP = 10;
   const [wordZoom, setWordZoom] = useState<number>(100);
+  // --- Tự động tách trang ảo cho Word (chỉ hiển thị, không thay đổi nội dung HTML thật) ---
+  const WORD_PAGE_HEIGHT_PX = 1123; // xấp xỉ 297mm ở 96dpi, khớp với min-h-[297mm] của trang
+  const [wordPageCount, setWordPageCount] = useState<number>(1);
+  // --- Zoom cho trình xem ảnh (.jpg/.jpeg/.png/.gif/.webp) ---
+  const IMAGE_ZOOM_MIN = 25;
+  const IMAGE_ZOOM_MAX = 300;
+  const IMAGE_ZOOM_STEP = 25;
+  const [imageZoom, setImageZoom] = useState<number>(100);
 
   const [selectedFile, setSelectedFile] = useState<DocumentNode | null>(null);
   const [htmlContent, setHtmlContent] = useState<string>('');
-  // Nội dung Header/Footer thật của file .docx (chỉ xem, không chỉnh sửa — mammoth không hỗ trợ phần này)
-  const [wordHeaderHtml, setWordHeaderHtml] = useState<string>('');
-  const [wordFooterHtml, setWordFooterHtml] = useState<string>('');
 
   // Đếm số từ từ nội dung HTML — hàm thuần, gọi trực tiếp ở mọi nơi setHtmlContent()
   // thay vì dùng useEffect riêng (tránh setState trực tiếp trong effect).
@@ -231,78 +236,22 @@ export default function HomePage() {
     ) {
       return 'word';
     }
+    if (
+      ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes((file.type || '').toLowerCase()) ||
+      /\.(jpe?g|png|gif|webp)$/i.test(file.path || '')
+    ) {
+      return 'image';
+    }
     return file.type || 'text';
   };
 
   // ---- Phát hiện định dạng file thật từ các byte đầu (chữ ký file) ----
-  // .docx thật là file ZIP (bắt đầu bằng "PK"); .doc cũ (OLE2) bắt đầu bằng chữ ký cố định khác.
-  // Dùng để phân biệt lỗi "không phải zip" là do file .doc cũ bị đổi tên đuôi, hay do lỗi khác.
-  const isZipSignature = (buf: ArrayBuffer): boolean => {
-    const bytes = new Uint8Array(buf.slice(0, 2));
-    return bytes[0] === 0x50 && bytes[1] === 0x4b; // 'P' 'K'
-  };
-
+  // .doc cũ (OLE2) bắt đầu bằng chữ ký cố định — dùng để phân biệt lỗi "không phải zip"
+  // là do file .doc cũ bị đổi tên đuôi thành .docx, hay do lỗi khác.
   const isOle2Signature = (buf: ArrayBuffer): boolean => {
     const bytes = new Uint8Array(buf.slice(0, 8));
     const sig = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
     return sig.every((b, i) => bytes[i] === b);
-  };
-
-  /** Giải mã một số HTML entity cơ bản có thể xuất hiện trong text XML của docx */
-  const decodeXmlEntities = (text: string): string =>
-    text
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'");
-
-  /**
-   * Trích nội dung chữ (không giữ định dạng phức tạp) từ header/footer thật của file .docx.
-   * Mammoth không hỗ trợ header/footer nên phải tự đọc trực tiếp từ các file XML bên trong .docx
-   * (word/header1.xml, word/footer1.xml...) bằng JSZip — thư viện này vốn đã có sẵn vì mammoth
-   * cũng dùng nó, nếu môi trường báo thiếu module thì chạy `npm install jszip`.
-   */
-  const extractDocxHeaderFooter = async (
-    arrayBuffer: ArrayBuffer
-  ): Promise<{ headerHtml: string; footerHtml: string }> => {
-    try {
-      const JSZipModule = await import('jszip');
-      const JSZip = JSZipModule.default;
-      const zip = await JSZip.loadAsync(arrayBuffer);
-
-      const extractParagraphsHtml = async (fileName: string): Promise<string> => {
-        const file = zip.file(fileName);
-        if (!file) return '';
-        const xml = await file.async('text');
-        const paragraphs = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
-        const lines = paragraphs
-          .map((p) => {
-            const runs = p.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
-            const text = runs
-              .map((r) => decodeXmlEntities(r.replace(/<w:t[^>]*>/, '').replace(/<\/w:t>/, '')))
-              .join('');
-            return text;
-          })
-          .filter((line) => line.trim().length > 0);
-        return lines.map((line) => `<p>${line}</p>`).join('');
-      };
-
-      // Ưu tiên header/footer mặc định (header1/footer1); dự phòng header2/3 nếu tài liệu dùng section khác
-      const headerHtml =
-        (await extractParagraphsHtml('word/header1.xml')) ||
-        (await extractParagraphsHtml('word/header2.xml')) ||
-        (await extractParagraphsHtml('word/header3.xml'));
-      const footerHtml =
-        (await extractParagraphsHtml('word/footer1.xml')) ||
-        (await extractParagraphsHtml('word/footer2.xml')) ||
-        (await extractParagraphsHtml('word/footer3.xml'));
-
-      return { headerHtml, footerHtml };
-    } catch (err) {
-      console.error('Không thể đọc header/footer của file:', err);
-      return { headerHtml: '', footerHtml: '' };
-    }
   };
 
   // Tải & chuyển đổi file Word (.docx) — giữ nguyên logic gốc
@@ -319,27 +268,18 @@ export default function HomePage() {
       if (isSubscribed) {
         setIsLoading(true);
         setWordZoom(100);
-        setWordHeaderHtml('');
-        setWordFooterHtml('');
       }
 
-      // Tải file gốc 1 lần duy nhất — dùng để đọc Header/Footer thật, và tái sử dụng luôn
-      // cho mammoth nếu chưa có nội dung thân bài đã lưu (tránh fetch lại 2 lần).
+      // Tải file gốc 1 lần duy nhất, tái sử dụng luôn cho mammoth nếu chưa có
+      // nội dung thân bài đã lưu (tránh fetch lại 2 lần).
       let originalArrayBuffer: ArrayBuffer | null = null;
       try {
         const res = await fetch(selectedFile.path!);
         if (res.ok) {
           originalArrayBuffer = await res.arrayBuffer();
-          if (isZipSignature(originalArrayBuffer)) {
-            const { headerHtml, footerHtml } = await extractDocxHeaderFooter(originalArrayBuffer);
-            if (isSubscribed) {
-              setWordHeaderHtml(headerHtml);
-              setWordFooterHtml(footerHtml);
-            }
-          }
         }
       } catch (err) {
-        console.error('Không thể tải file gốc để đọc header/footer:', err);
+        console.error('Không thể tải file gốc:', err);
       }
 
       try {
@@ -650,6 +590,15 @@ export default function HomePage() {
       distanceFromRightEdge <= WORD_TABLE_RESIZE_EDGE_PX && distanceFromRightEdge >= -2 ? 'col-resize' : '';
   };
 
+  /** Tính lại số trang ảo dựa trên chiều cao thật của nội dung so với 1 trang A4 (297mm) */
+  const recalcWordPageCount = () => {
+    if (!editorRef.current) return;
+    const rawHeight = editorRef.current.scrollHeight;
+    const naturalHeight = rawHeight / (wordZoom / 100);
+    const pages = Math.max(1, Math.ceil(naturalHeight / WORD_PAGE_HEIGHT_PX));
+    setWordPageCount(pages);
+  };
+
   const handleInput = () => {
     if (!selectedFile || !editorRef.current) return;
     setIsSaved(false);
@@ -661,6 +610,7 @@ export default function HomePage() {
     const plainText = editorRef.current.innerText || '';
     const words = plainText.trim().length > 0 ? plainText.trim().split(/\s+/).length : 0;
     setWordCount(words);
+    recalcWordPageCount();
 
     localStorage.setItem(docKey, newContent);
 
@@ -728,6 +678,15 @@ export default function HomePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isResizingWordTableCol]);
+
+  // Tính lại số trang ảo sau khi nội dung/zoom thay đổi — chờ 1 khung hình để layout đã cập nhật xong
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      recalcWordPageCount();
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [htmlContent, wordZoom]);
 
   // ---- Ribbon: lưu / khôi phục vùng bôi đen khi bấm nút hoặc mở dropdown ----
   const saveSelection = () => {
@@ -865,6 +824,34 @@ export default function HomePage() {
     execFormat(type, value);
   };
 
+  /** Chèn 1 bảng mới vào vị trí con trỏ trong tài liệu Word (hỏi số dòng/cột trước) */
+  const insertWordTable = () => {
+    if (!editorRef.current) return;
+
+    const rowsInput = window.prompt('Số dòng của bảng:', '3');
+    if (rowsInput === null) return;
+    const colsInput = window.prompt('Số cột của bảng:', '3');
+    if (colsInput === null) return;
+
+    const rows = Math.max(1, Math.min(50, parseInt(rowsInput, 10) || 3));
+    const cols = Math.max(1, Math.min(20, parseInt(colsInput, 10) || 3));
+
+    let tableHtml = '<table style="width:100%;border-collapse:collapse;margin:12px 0;">';
+    for (let r = 0; r < rows; r++) {
+      tableHtml += '<tr>';
+      for (let c = 0; c < cols; c++) {
+        tableHtml += '<td style="border:1px solid #000;padding:6px 8px;min-width:60px;">&nbsp;</td>';
+      }
+      tableHtml += '</tr>';
+    }
+    tableHtml += '</table><p><br></p>';
+
+    editorRef.current.focus();
+    restoreSelection();
+    document.execCommand('insertHTML', false, tableHtml);
+    handleInput();
+  };
+
   const handleReset = async () => {
     if (!selectedFile || !selectedFile.path) return;
     const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
@@ -881,12 +868,6 @@ export default function HomePage() {
 
       const res = await fetch(selectedFile.path);
       const arrayBuffer = await res.arrayBuffer();
-
-      if (isZipSignature(arrayBuffer)) {
-        const { headerHtml, footerHtml } = await extractDocxHeaderFooter(arrayBuffer);
-        setWordHeaderHtml(headerHtml);
-        setWordFooterHtml(footerHtml);
-      }
 
       const mammoth = await import('mammoth');
       const result = await mammoth.convertToHtml({ arrayBuffer });
@@ -1075,6 +1056,100 @@ export default function HomePage() {
     if (key === 'bold') applyStyleToSelectedCell({ bold: !current.bold });
     else if (key === 'italic') applyStyleToSelectedCell({ italic: !current.italic });
     else applyStyleToSelectedCell({ underline: !current.underline });
+  };
+
+  // --- Gộp ô / Bỏ gộp ô Excel (mở rộng theo ô đang chọn — chưa hỗ trợ chọn vùng nhiều ô cùng lúc) ---
+  const mergeSelectedCellRight = () => {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        const existing = sheet.merges[`${r}-${c}`];
+        const currentColSpan = existing?.colSpan ?? 1;
+        const currentRowSpan = existing?.rowSpan ?? 1;
+        const newColSpan = currentColSpan + 1;
+        const targetCol = c + newColSpan - 1;
+        if (targetCol > sheet.endCol) return sheet;
+
+        const merges: Record<string, ExcelMerge> = { ...sheet.merges };
+        merges[`${r}-${c}`] = { r, c, rowSpan: currentRowSpan, colSpan: newColSpan };
+
+        const skip = new Set(sheet.skip);
+        for (let rr = r; rr < r + currentRowSpan; rr++) {
+          for (let cc = c; cc < c + newColSpan; cc++) {
+            if (rr === r && cc === c) continue;
+            skip.add(`${rr}-${cc}`);
+          }
+        }
+
+        return { ...sheet, merges, skip };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
+  };
+
+  const mergeSelectedCellDown = () => {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        const existing = sheet.merges[`${r}-${c}`];
+        const currentColSpan = existing?.colSpan ?? 1;
+        const currentRowSpan = existing?.rowSpan ?? 1;
+        const newRowSpan = currentRowSpan + 1;
+        const maxRowIndex = sheet.startRow + sheet.rows.length - 1;
+        const targetRow = r + newRowSpan - 1;
+        if (targetRow > maxRowIndex) return sheet;
+
+        const merges: Record<string, ExcelMerge> = { ...sheet.merges };
+        merges[`${r}-${c}`] = { r, c, rowSpan: newRowSpan, colSpan: currentColSpan };
+
+        const skip = new Set(sheet.skip);
+        for (let rr = r; rr < r + newRowSpan; rr++) {
+          for (let cc = c; cc < c + currentColSpan; cc++) {
+            if (rr === r && cc === c) continue;
+            skip.add(`${rr}-${cc}`);
+          }
+        }
+
+        return { ...sheet, merges, skip };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
+  };
+
+  const unmergeSelectedCell = () => {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        const existing = sheet.merges[`${r}-${c}`];
+        if (!existing) return sheet;
+
+        const merges = { ...sheet.merges };
+        delete merges[`${r}-${c}`];
+
+        const skip = new Set(sheet.skip);
+        for (let rr = r; rr < r + existing.rowSpan; rr++) {
+          for (let cc = c; cc < c + existing.colSpan; cc++) {
+            if (rr === r && cc === c) continue;
+            skip.delete(`${rr}-${cc}`);
+          }
+        }
+
+        return { ...sheet, merges, skip };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
   };
 
   // Chèn / xoá dòng hoặc cột — dịch chuyển toạ độ r,c của các ô & vùng gộp còn lại
@@ -1517,6 +1592,7 @@ export default function HomePage() {
     word: { label: 'Word', className: 'bg-blue-50 text-blue-700 border-blue-200/80' },
     excel: { label: 'Excel', className: 'bg-emerald-50 text-emerald-700 border-emerald-200/80' },
     pdf: { label: 'PDF', className: 'bg-rose-50 text-rose-700 border-rose-200/80' },
+    image: { label: 'Ảnh', className: 'bg-violet-50 text-violet-700 border-violet-200/80' },
     text: { label: 'Tài liệu', className: 'bg-slate-100 text-slate-600 border-slate-200/80' },
   };
 
@@ -1593,6 +1669,82 @@ export default function HomePage() {
               src={`${selectedFile.path}#toolbar=1`}
               className="w-full h-full border-0 rounded-xl shadow-md bg-white"
               title={selectedFile.title}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (fileType === 'image' && selectedFile.path) {
+      return (
+        <div key={contentKey} className="flex flex-col h-full w-full min-w-0 bg-[#F1F3F1] overflow-hidden animate-riseIn">
+          <div className="bg-white/90 backdrop-blur-md border-b border-slate-200/70 px-4 py-2 flex items-center justify-between gap-3 shadow-sm print:hidden shrink-0 z-10 animate-slideDown">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-violet-50 border border-violet-200/80 text-violet-600 shrink-0">
+                <Icon.Doc className="w-4 h-4" />
+              </span>
+              <span className="text-[13px] font-semibold text-slate-700 truncate">{selectedFile.title}</span>
+              <span className="inline-flex items-center px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide rounded-full border shrink-0 bg-violet-50 text-violet-700 border-violet-200/80">
+                Ảnh
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => setImageZoom((z) => Math.max(IMAGE_ZOOM_MIN, z - IMAGE_ZOOM_STEP))}
+                disabled={imageZoom <= IMAGE_ZOOM_MIN}
+                aria-label="Thu nhỏ"
+                title="Thu nhỏ"
+                className="w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-teal-700 hover:bg-teal-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                <Icon.ZoomOut className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setImageZoom(100)}
+                title="Đặt lại mức thu phóng 100%"
+                className="w-12 text-center font-mono text-[11px] text-slate-500 hover:text-teal-700 cursor-pointer"
+              >
+                {imageZoom}%
+              </button>
+              <button
+                onClick={() => setImageZoom((z) => Math.min(IMAGE_ZOOM_MAX, z + IMAGE_ZOOM_STEP))}
+                disabled={imageZoom >= IMAGE_ZOOM_MAX}
+                aria-label="Phóng to"
+                title="Phóng to"
+                className="w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-teal-700 hover:bg-teal-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                <Icon.ZoomIn className="w-4 h-4" />
+              </button>
+
+              <div className="w-px h-5 bg-slate-200 mx-1" />
+
+              <a
+                href={selectedFile.path}
+                download={selectedFile.fileName || selectedFile.title}
+                title="Tải ảnh xuống"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
+              >
+                <Icon.Download className="w-3.5 h-3.5" />
+                Tải xuống
+              </a>
+              <button
+                onClick={handlePrint}
+                title="In ảnh"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer"
+              >
+                <Icon.Print className="w-3.5 h-3.5" />
+                In
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto p-6 flex items-start justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={selectedFile.path}
+              alt={selectedFile.title}
+              style={{ width: `${imageZoom}%`, maxWidth: 'none' }}
+              className="rounded-xl shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 bg-white print:shadow-none print:border-none"
             />
           </div>
         </div>
@@ -1732,6 +1884,34 @@ export default function HomePage() {
                 aria-label="Màu nền ô"
               />
             </label>
+
+            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pr-1 hidden lg:inline">Gộp ô</span>
+
+            <button
+              onClick={mergeSelectedCellRight}
+              disabled={!selectedCell}
+              title="Gộp với ô bên phải"
+              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Gộp phải
+            </button>
+            <button
+              onClick={mergeSelectedCellDown}
+              disabled={!selectedCell}
+              title="Gộp với ô bên dưới"
+              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Gộp xuống
+            </button>
+            <button
+              onClick={unmergeSelectedCell}
+              disabled={!selectedCell || !excelSheets[activeSheet]?.merges[`${selectedCell?.r}-${selectedCell?.c}`]}
+              title="Bỏ gộp ô đang chọn"
+              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Bỏ gộp
+            </button>
 
             <div className="w-px h-5 bg-slate-200 mx-1" />
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pr-1 hidden lg:inline">Dòng / Cột</span>
@@ -2199,6 +2379,29 @@ export default function HomePage() {
                 </div>
                 <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Kiểu văn bản</span>
               </div>
+
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
+
+              {/* Nhóm: Chèn — hiện chỉ có Chèn bảng, gọi insertWordTable() */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    title="Chèn bảng"
+                    aria-label="Chèn bảng"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      saveSelection();
+                    }}
+                    onClick={insertWordTable}
+                    className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shrink-0 transition-colors duration-150 cursor-pointer"
+                  >
+                    <Icon.Table className="w-4 h-4" />
+                    <span className="text-[11.5px] font-semibold">Chèn bảng</span>
+                  </button>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Chèn</span>
+              </div>
             </div>
           )}
 
@@ -2265,18 +2468,9 @@ export default function HomePage() {
               </div>
             ) : (
               <div
-                className="flex flex-col w-[210mm] max-w-full shrink-0 self-start mb-12"
+                className="relative flex flex-col w-[210mm] max-w-full shrink-0 self-start mb-12"
                 style={{ zoom: `${wordZoom}%` } as React.CSSProperties}
               >
-                {/* Header thật của file .docx — chỉ xem, mammoth không hỗ trợ chỉnh sửa phần này */}
-                {wordHeaderHtml && (
-                  <div
-                    className="bg-slate-50/70 border border-b-0 border-slate-200 rounded-t-sm px-16 pt-4 pb-3 text-center text-slate-500 text-[10.5pt] italic [&_p]:my-0.5 print:bg-white"
-                    style={{ fontFamily: '"Times New Roman", Times, serif' }}
-                    dangerouslySetInnerHTML={{ __html: wordHeaderHtml }}
-                  />
-                )}
-
                 <div
                   ref={editorRef}
                   onMouseUp={refreshActiveFormats}
@@ -2288,15 +2482,7 @@ export default function HomePage() {
                   spellCheck={false}
                   onInput={handleInput}
                   dangerouslySetInnerHTML={{ __html: htmlContent }}
-                  className={`bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0 ${
-                    wordHeaderHtml && wordFooterHtml
-                      ? 'rounded-none'
-                      : wordHeaderHtml
-                        ? 'rounded-b-sm'
-                        : wordFooterHtml
-                          ? 'rounded-t-sm'
-                          : 'rounded-sm'
-                  }`}
+                  className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
                   style={{
                     boxSizing: 'border-box',
                     wordBreak: 'break-word',
@@ -2306,13 +2492,25 @@ export default function HomePage() {
                   }}
                 />
 
-                {/* Footer thật của file .docx — chỉ xem, mammoth không hỗ trợ chỉnh sửa phần này */}
-                {wordFooterHtml && (
-                  <div
-                    className="bg-slate-50/70 border border-t-0 border-slate-200 rounded-b-sm px-16 pt-3 pb-4 text-center text-slate-400 text-[9.5pt] italic [&_p]:my-0.5 print:bg-white"
-                    style={{ fontFamily: '"Times New Roman", Times, serif' }}
-                    dangerouslySetInnerHTML={{ __html: wordFooterHtml }}
-                  />
+                {/* Vạch tách trang ảo + đánh số trang tự động — chỉ hiển thị khi nội dung dài hơn 1 trang A4 */}
+                {wordPageCount > 1 &&
+                  Array.from({ length: wordPageCount - 1 }, (_, i) => i + 1).map((pageBoundary) => (
+                    <div
+                      key={pageBoundary}
+                      className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-10 print:hidden"
+                      style={{ top: pageBoundary * WORD_PAGE_HEIGHT_PX }}
+                    >
+                      <div className="absolute left-0 right-0 border-t-2 border-dashed border-slate-300" />
+                      <span className="relative px-2.5 py-0.5 bg-white border border-slate-300 rounded-full text-[10px] font-semibold text-slate-500 shadow-sm">
+                        Trang {pageBoundary}/{wordPageCount}
+                      </span>
+                    </div>
+                  ))}
+
+                {wordPageCount > 1 && (
+                  <div className="flex items-center justify-center py-2.5 text-[10px] font-semibold text-slate-400 print:hidden">
+                    Trang {wordPageCount}/{wordPageCount}
+                  </div>
                 )}
               </div>
             )}
