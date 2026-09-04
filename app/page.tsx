@@ -40,8 +40,12 @@ export default function HomePage() {
   const WORD_ZOOM_MAX = 150;
   const WORD_ZOOM_STEP = 10;
   const [wordZoom, setWordZoom] = useState<number>(100);
-  // --- Tự động tách trang ảo cho Word (chỉ hiển thị, không thay đổi nội dung HTML thật) ---
-  const WORD_PAGE_HEIGHT_PX = 1123; // xấp xỉ 297mm ở 96dpi, khớp với min-h-[297mm] của trang
+  // --- Tự động tách trang thật cho Word (chèn khoảng trống thật vào DOM, không phải overlay) ---
+  // A4 CSS ở 96dpi: 210 x 297mm ≈ 793.7 x 1122.5px. Dùng giá trị gần đúng để
+  // đồng bộ với min-h-[297mm] của vùng soạn thảo và tránh lỗi lệch trang theo từng lần render.
+  const WORD_PAGE_HEIGHT_PX = 1122.52;
+  const WORD_PAGE_GAP_PX = 56; // chiều cao khoảng trống thật giữa 2 trang
+  const WORD_PAGE_GAP_ATTR = 'data-page-gap'; // đánh dấu khối ngăn trang để luôn loại bỏ trước khi lưu
   const [wordPageCount, setWordPageCount] = useState<number>(1);
   // --- Zoom cho trình xem ảnh (.jpg/.jpeg/.png/.gif/.webp) ---
   const IMAGE_ZOOM_MIN = 25;
@@ -590,13 +594,160 @@ export default function HomePage() {
       distanceFromRightEdge <= WORD_TABLE_RESIZE_EDGE_PX && distanceFromRightEdge >= -2 ? 'col-resize' : '';
   };
 
-  /** Tính lại số trang ảo dựa trên chiều cao thật của nội dung so với 1 trang A4 (297mm) */
-  const recalcWordPageCount = () => {
-    if (!editorRef.current) return;
-    const rawHeight = editorRef.current.scrollHeight;
-    const naturalHeight = rawHeight / (wordZoom / 100);
-    const pages = Math.max(1, Math.ceil(naturalHeight / WORD_PAGE_HEIGHT_PX));
-    setWordPageCount(pages);
+  // ---- Ribbon: lưu / khôi phục vùng bôi đen khi bấm nút hoặc mở dropdown ----
+  // (Dời lên trước vì insertRealPageGaps() bên dưới cần dùng đến 2 hàm này)
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const restoreSelection = () => {
+    const sel = window.getSelection();
+    if (sel && savedRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  };
+
+  /**
+   * Thu thập các điểm ngắt an toàn ở cấp khối của tài liệu.
+   *
+   * QUAN TRỌNG: Không chèn một <div> vào trong <table>/<tbody>/<tr>. DOM của HTML
+   * không cho phép cấu trúc đó và trình duyệt có thể tự di chuyển node, làm hỏng bố cục.
+   * Vì vậy bảng luôn được xem là một khối duy nhất; trang chỉ ngắt giữa các khối cấp cao nhất.
+   */
+  const collectWordBreakCandidates = (container: HTMLElement): HTMLElement[] => {
+    return Array.from(container.children).filter((child) => {
+      const el = child as HTMLElement;
+      return !el.hasAttribute(WORD_PAGE_GAP_ATTR);
+    }) as HTMLElement[];
+  };
+
+  /** Dựng 1 khối ngăn trang thật: khoảng trống màu nền workspace + nhãn "Trang k/N", không thể chỉnh sửa */
+  const buildPageGapElement = (pageIndex: number, totalPages: number): HTMLDivElement => {
+    const gap = document.createElement('div');
+    gap.setAttribute(WORD_PAGE_GAP_ATTR, 'true');
+    gap.setAttribute('contenteditable', 'false');
+    gap.setAttribute('aria-hidden', 'true');
+    gap.style.cssText = [
+      `height:${WORD_PAGE_GAP_PX}px`,
+      `min-height:${WORD_PAGE_GAP_PX}px`,
+      'width:calc(100% + 128px)',
+      'margin:0 -64px',
+      'background:#F1F3F1',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'position:relative',
+      'user-select:none',
+      'pointer-events:none',
+      'box-sizing:border-box',
+      'flex:0 0 auto',
+      'box-shadow: inset 0 8px 10px -8px rgba(15,50,55,0.12), inset 0 -8px 10px -8px rgba(15,50,55,0.12)',
+    ].join(';');
+
+    const badge = document.createElement('span');
+    badge.textContent = `Trang ${pageIndex}/${totalPages}`;
+    badge.style.cssText = [
+      'background:#ffffff',
+      'border:1px solid #cbd5e1',
+      'border-radius:9999px',
+      'padding:3px 12px',
+      'font-size:10.5px',
+      'font-weight:600',
+      'color:#64748b',
+      'box-shadow:0 1px 2px rgba(0,0,0,0.05)',
+      'font-family:Inter, ui-sans-serif, sans-serif',
+      'white-space:nowrap',
+    ].join(';');
+
+    gap.appendChild(badge);
+    return gap;
+  };
+
+  /**
+   * Tách trang ổn định theo khổ A4.
+   *
+   * Cách cũ chèn khoảng trống theo thứ tự từ trang 1 → cuối tài liệu. Khi khoảng trống
+   * đầu tiên được thêm vào, toàn bộ vị trí phía sau bị đẩy xuống, khiến mốc trang 2, 3...
+   * bị lệch tiếp tục. Bản sửa này đo toàn bộ tài liệu khi CHƯA có gap, chọn điểm ngắt theo
+   * đúng mốc A4 rồi chèn các gap từ cuối về đầu. Vì vậy việc chèn gap không làm thay đổi
+   * các tọa độ đã đo và các trang sau không bị trôi.
+   */
+  const insertRealPageGaps = () => {
+    const container = editorRef.current;
+    if (!container || isLoading) return;
+
+    // 1) Luôn làm sạch gap cũ trước khi đo. Gap chỉ là phần hiển thị, không phải nội dung Word.
+    container.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}]`).forEach((el) => el.remove());
+
+    // 2) Ép trình duyệt cập nhật layout trước khi lấy kích thước.
+    const zoomFactor = Math.max(0.01, wordZoom / 100);
+    const containerRect = container.getBoundingClientRect();
+    const naturalHeight = container.scrollHeight / zoomFactor;
+    const totalPages = Math.max(1, Math.ceil((naturalHeight - 0.5) / WORD_PAGE_HEIGHT_PX));
+    setWordPageCount(totalPages);
+
+    if (totalPages <= 1) return;
+
+    // 3) Chỉ lấy các khối cấp cao nhất. Không cắt giữa ô/dòng bảng và không tạo DOM invalid.
+    const boundaryEntries = collectWordBreakCandidates(container)
+      .map((el) => ({
+        el,
+        bottom: (el.getBoundingClientRect().bottom - containerRect.top) / zoomFactor,
+      }))
+      .filter((entry) => Number.isFinite(entry.bottom) && entry.bottom > 0)
+      .sort((a, b) => a.bottom - b.bottom);
+
+    const breaks: { el: HTMLElement; pageIndex: number }[] = [];
+    let lastBottom = 0;
+
+    // 4) Mỗi mốc trang chọn khối cuối cùng nằm trong trang đó. Nếu một khối lớn hơn 1 trang,
+    //    không chèn gap giữa khối; ưu tiên giữ nguyên nội dung thay vì phá cấu trúc Word.
+    for (let pageIndex = 1; pageIndex < totalPages; pageIndex++) {
+      const target = pageIndex * WORD_PAGE_HEIGHT_PX;
+      let chosen: { el: HTMLElement; bottom: number } | null = null;
+
+      for (const entry of boundaryEntries) {
+        if (entry.bottom <= target + 1 && entry.bottom > lastBottom + 0.5) {
+          chosen = entry;
+          continue;
+        }
+        if (entry.bottom > target + 1) break;
+      }
+
+      if (!chosen) continue;
+
+      breaks.push({ el: chosen.el, pageIndex });
+      lastBottom = chosen.bottom;
+    }
+
+    // 5) Chèn từ cuối về đầu để tọa độ/DOM của các điểm đã đo không bị thay đổi.
+    for (let i = breaks.length - 1; i >= 0; i--) {
+      const item = breaks[i];
+      if (!item.el.parentElement || item.el.parentElement !== container) continue;
+      item.el.insertAdjacentElement('afterend', buildPageGapElement(item.pageIndex, totalPages));
+    }
+  };
+
+  /** Lên lịch phân trang sau khi browser đã hoàn tất layout; có thêm 1 nhịp dự phòng cho font/ảnh. */
+  const scheduleWordPagination = () => {
+    if (!editorRef.current || isLoading) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        insertRealPageGaps();
+      });
+    });
+  };
+
+  /** Lấy nội dung HTML thật (đã loại bỏ mọi khối ngăn trang) để lưu/đếm từ — không bao giờ lưu khối trang trí này */
+  const getCleanEditorSnapshot = (): { html: string; text: string } => {
+    if (!editorRef.current) return { html: '', text: '' };
+    const clone = editorRef.current.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}]`).forEach((el) => el.remove());
+    return { html: clone.innerHTML, text: clone.textContent || '' };
   };
 
   const handleInput = () => {
@@ -604,13 +755,11 @@ export default function HomePage() {
     setIsSaved(false);
 
     const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
-    const newContent = editorRef.current.innerHTML;
-
-    // Đếm số từ thực tế trong nội dung hiện tại (chỉ hiển thị ở status bar, không ảnh hưởng lưu trữ)
-    const plainText = editorRef.current.innerText || '';
+    // Luôn lấy nội dung/đếm từ từ bản sao đã loại bỏ khối ngăn trang — đảm bảo không bao giờ
+    // lưu nhầm hoặc đếm nhầm phần trang trí (khối ngăn trang) vào tài liệu thật.
+    const { html: newContent, text: plainText } = getCleanEditorSnapshot();
     const words = plainText.trim().length > 0 ? plainText.trim().split(/\s+/).length : 0;
     setWordCount(words);
-    recalcWordPageCount();
 
     localStorage.setItem(docKey, newContent);
 
@@ -627,6 +776,9 @@ export default function HomePage() {
       } catch (err) {
         console.error('Lỗi đồng bộ Cloud:', err);
       }
+      // Chỉ dựng lại khoảng trống trang SAU KHI người dùng đã tạm dừng gõ (đủ 800ms) và đã lưu xong,
+      // tránh thay đổi cấu trúc DOM ngay giữa lúc đang gõ (có thể làm nhảy con trỏ).
+      scheduleWordPagination();
     }, 800);
   };
 
@@ -679,30 +831,31 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isResizingWordTableCol]);
 
-  // Tính lại số trang ảo sau khi nội dung/zoom thay đổi — chờ 1 khung hình để layout đã cập nhật xong
+  // Dựng lại khoảng trống trang thật sau khi nội dung/zoom thay đổi.
+  // ResizeObserver giúp phân trang lại khi chiều rộng vùng Word thay đổi (xoay màn hình,
+  // kéo sidebar, thay đổi kích thước cửa sổ), vì khi đó độ xuống dòng cũng thay đổi.
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      recalcWordPageCount();
-    });
-    return () => cancelAnimationFrame(raf);
+    if (!editorRef.current || isLoading) return;
+
+    scheduleWordPagination();
+
+    const editor = editorRef.current;
+    const resizeObserver = new ResizeObserver(() => scheduleWordPagination());
+    resizeObserver.observe(editor);
+
+    const handleWindowResize = () => scheduleWordPagination();
+    window.addEventListener('resize', handleWindowResize);
+
+    const handleLoad = () => scheduleWordPagination();
+    window.addEventListener('load', handleLoad);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+      window.removeEventListener('load', handleLoad);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [htmlContent, wordZoom]);
-
-  // ---- Ribbon: lưu / khôi phục vùng bôi đen khi bấm nút hoặc mở dropdown ----
-  const saveSelection = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode)) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-    }
-  };
-
-  const restoreSelection = () => {
-    const sel = window.getSelection();
-    if (sel && savedRangeRef.current) {
-      sel.removeAllRanges();
-      sel.addRange(savedRangeRef.current);
-    }
-  };
+  }, [htmlContent, wordZoom, isLoading]);
 
   const refreshActiveFormats = () => {
     try {
@@ -2492,26 +2645,6 @@ export default function HomePage() {
                   }}
                 />
 
-                {/* Vạch tách trang ảo + đánh số trang tự động — chỉ hiển thị khi nội dung dài hơn 1 trang A4 */}
-                {wordPageCount > 1 &&
-                  Array.from({ length: wordPageCount - 1 }, (_, i) => i + 1).map((pageBoundary) => (
-                    <div
-                      key={pageBoundary}
-                      className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-10 print:hidden"
-                      style={{ top: pageBoundary * WORD_PAGE_HEIGHT_PX }}
-                    >
-                      <div className="absolute left-0 right-0 border-t-2 border-dashed border-slate-300" />
-                      <span className="relative px-2.5 py-0.5 bg-white border border-slate-300 rounded-full text-[10px] font-semibold text-slate-500 shadow-sm">
-                        Trang {pageBoundary}/{wordPageCount}
-                      </span>
-                    </div>
-                  ))}
-
-                {wordPageCount > 1 && (
-                  <div className="flex items-center justify-center py-2.5 text-[10px] font-semibold text-slate-400 print:hidden">
-                    Trang {wordPageCount}/{wordPageCount}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -2532,6 +2665,12 @@ export default function HomePage() {
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Khoảng trống phân trang chỉ phục vụ giao diện soạn thảo, không phải nội dung Word. */
+        [data-page-gap] { break-inside: avoid; }
+        @media print {
+          [data-page-gap] { display: none !important; }
+        }
 
         @keyframes riseIn {
           from { opacity: 0; transform: translateY(10px); }
