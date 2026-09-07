@@ -5,6 +5,89 @@ import FolderTree, { DocumentNode } from '@/components/FolderTree';
 import type { WorkBook, CellObject, utils as XLSXUtilsNamespace } from 'xlsx';
 
 type XLSXUtils = typeof XLSXUtilsNamespace;
+
+
+type ExcelCellStyle = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  align?: 'left' | 'center' | 'right';
+  color?: string;
+  bg?: string;
+  fontSize?: number;
+};
+type ExcelCellData = { r: number; c: number; text: string; style?: ExcelCellStyle };
+type ExcelMergeData = { r: number; c: number; rowSpan: number; colSpan: number };
+type ExcelSheetData = {
+  name: string;
+  rows: ExcelCellData[][];
+  merges: Record<string, ExcelMergeData>;
+  skip: Set<string>;
+  startRow: number;
+  startCol: number;
+  endCol: number;
+  error?: string;
+};
+
+const EXCEL_PAGE_HEIGHT_PX = 1122.52;
+const EXCEL_HEADER_HEIGHT_PX = 26;
+const EXCEL_ROW_DEFAULT_HEIGHT_PX = 30;
+const EXCEL_PAGE_GAP_PX = 56;
+
+function getExcelPageRangesStable(
+  sheet: ExcelSheetData,
+  sheetIndex: number,
+  rowHeights: Record<string, number>,
+): Array<{ start: number; end: number }> {
+  if (!sheet.rows.length) return [];
+
+  const getRowHeight = (row: number) =>
+    rowHeights[`${sheetIndex}-${row}`] ?? EXCEL_ROW_DEFAULT_HEIGHT_PX;
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = 0;
+
+  while (start < sheet.rows.length) {
+    let end = start;
+    let used = EXCEL_HEADER_HEIGHT_PX;
+
+    while (end < sheet.rows.length) {
+      const absRow = sheet.rows[end]?.[0]?.r ?? end;
+      const rowHeight = getRowHeight(absRow);
+
+      if (end > start && used + rowHeight > EXCEL_PAGE_HEIGHT_PX) break;
+      used += rowHeight;
+      end += 1;
+
+      // Giữ nguyên merge dọc: không cắt merge giữa hai trang.
+      let extended = true;
+      while (extended) {
+        extended = false;
+        const lastAbsRow = sheet.rows[end - 1]?.[0]?.r ?? (end - 1);
+
+        for (const merge of Object.values(sheet.merges)) {
+          const mergeStart = merge.r;
+          const mergeEnd = merge.r + merge.rowSpan - 1;
+          if (mergeStart >= start && mergeStart <= lastAbsRow && mergeEnd >= end) {
+            const targetEnd = Math.min(sheet.rows.length, mergeEnd + 1);
+            while (end < targetEnd) {
+              const extraAbsRow = sheet.rows[end]?.[0]?.r ?? end;
+              used += getRowHeight(extraAbsRow);
+              end += 1;
+            }
+            extended = true;
+          }
+        }
+      }
+    }
+
+    if (end <= start) end = Math.min(start + 1, sheet.rows.length);
+    ranges.push({ start, end });
+    start = end;
+  }
+
+  return ranges;
+}
 type CellStyleXLSX = {
   font?: { bold?: boolean; italic?: boolean; underline?: boolean; sz?: number; color?: { rgb?: string } };
   fgColor?: { rgb?: string };
@@ -46,6 +129,7 @@ export default function HomePage() {
   const WORD_PAGE_HEIGHT_PX = 1122.52;
   const WORD_PAGE_GAP_PX = 56; // chiều cao khoảng trống thật giữa 2 trang
   const WORD_PAGE_GAP_ATTR = 'data-page-gap'; // đánh dấu khối ngăn trang để luôn loại bỏ trước khi lưu
+  const WORD_PAGE_BADGE_ATTR = 'data-page-badge'; // nhãn đầu trang, chỉ hiển thị, không thuộc nội dung Word
   const [wordPageCount, setWordPageCount] = useState<number>(1);
   // --- Zoom cho trình xem ảnh (.jpg/.jpeg/.png/.gif/.webp) ---
   const IMAGE_ZOOM_MIN = 25;
@@ -76,27 +160,10 @@ export default function HomePage() {
   const [currentBlock, setCurrentBlock] = useState<string>('p');
 
   // Trạng thái xem file Excel (.xlsx)
-  type CellStyle = {
-    bold?: boolean;
-    italic?: boolean;
-    underline?: boolean;
-    align?: 'left' | 'center' | 'right';
-    color?: string;
-    bg?: string;
-    fontSize?: number;
-  };
-  type ExcelCell = { r: number; c: number; text: string; style?: CellStyle };
-  type ExcelMerge = { r: number; c: number; rowSpan: number; colSpan: number };
-  type ExcelSheet = {
-    name: string;
-    rows: ExcelCell[][];
-    merges: Record<string, ExcelMerge>;
-    skip: Set<string>;
-    startRow: number;
-    startCol: number;
-    endCol: number;
-    error?: string;
-  };
+  type CellStyle = ExcelCellStyle;
+  type ExcelCell = ExcelCellData;
+  type ExcelMerge = ExcelMergeData;
+  type ExcelSheet = ExcelSheetData;
   type ExcelEditEntry = { text: string; style?: CellStyle };
 
   const [excelSheets, setExcelSheets] = useState<ExcelSheet[]>([]);
@@ -667,6 +734,36 @@ export default function HomePage() {
     return gap;
   };
 
+  /** Nhãn trang ở đầu mỗi trang. Đây là phần tử tuyệt đối, không chiếm chỗ và không thuộc nội dung Word. */
+  const buildPageStartBadge = (pageIndex: number, totalPages: number): HTMLDivElement => {
+    const badge = document.createElement('div');
+    badge.setAttribute(WORD_PAGE_BADGE_ATTR, 'true');
+    badge.setAttribute('contenteditable', 'false');
+    badge.setAttribute('aria-hidden', 'true');
+    badge.style.cssText = [
+      'position:absolute',
+      'top:10px',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'z-index:5',
+      'pointer-events:none',
+      'user-select:none',
+      'background:#ffffff',
+      'border:1px solid #cbd5e1',
+      'border-radius:9999px',
+      'padding:3px 12px',
+      'font-size:10.5px',
+      'font-weight:600',
+      'color:#64748b',
+      'box-shadow:0 1px 2px rgba(0,0,0,0.05)',
+      'font-family:Inter, ui-sans-serif, sans-serif',
+      'white-space:nowrap',
+      'line-height:1.2',
+    ].join(';');
+    badge.textContent = `Trang ${pageIndex}/${totalPages}`;
+    return badge;
+  };
+
   /**
    * Tách trang ổn định theo khổ A4.
    *
@@ -680,55 +777,103 @@ export default function HomePage() {
     const container = editorRef.current;
     if (!container || isLoading) return;
 
-    // 1) Luôn làm sạch gap cũ trước khi đo. Gap chỉ là phần hiển thị, không phải nội dung Word.
-    container.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}]`).forEach((el) => el.remove());
+    // Chỉ giữ lại nội dung thật để đo. Các gap/nhãn cũ không được tham gia vào phép đo.
+    container.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}], [${WORD_PAGE_BADGE_ATTR}]`).forEach((el) => el.remove());
 
-    // 2) Ép trình duyệt cập nhật layout trước khi lấy kích thước.
     const zoomFactor = Math.max(0.01, wordZoom / 100);
     const containerRect = container.getBoundingClientRect();
-    const naturalHeight = container.scrollHeight / zoomFactor;
-    const totalPages = Math.max(1, Math.ceil((naturalHeight - 0.5) / WORD_PAGE_HEIGHT_PX));
+
+    const naturalCandidates = collectWordBreakCandidates(container);
+    const meaningfulCandidates = naturalCandidates.filter((el) => {
+      const text = (el.textContent || '').replace(/\u00a0/g, ' ').trim();
+      return text.length > 0 || !!el.querySelector('img, table, svg, canvas');
+    });
+
+    // Đo chiều cao nội dung thật, KHÔNG dùng min-height/scrollHeight của editor
+    // để tránh sinh thêm một trang ảo.
+    const lastMeaningful = meaningfulCandidates[meaningfulCandidates.length - 1];
+    const lastRect = lastMeaningful?.getBoundingClientRect();
+    const naturalContentBottom = lastRect
+      ? Math.max(1, (lastRect.bottom - containerRect.top) / zoomFactor)
+      : 1;
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(Math.max(1, naturalContentBottom - 0.5) / WORD_PAGE_HEIGHT_PX)
+    );
     setWordPageCount(totalPages);
 
-    if (totalPages <= 1) return;
+    // Trang 1 phải có nhãn Trang 1/N ngay tại đầu trang. Nhãn là absolute nên không
+    // làm thay đổi chiều cao/nội dung, và được loại khỏi snapshot khi lưu.
+    container.insertBefore(buildPageStartBadge(1, totalPages), container.firstChild);
 
-    // 3) Chỉ lấy các khối cấp cao nhất. Không cắt giữa ô/dòng bảng và không tạo DOM invalid.
-    const boundaryEntries = collectWordBreakCandidates(container)
-      .map((el) => ({
-        el,
-        bottom: (el.getBoundingClientRect().bottom - containerRect.top) / zoomFactor,
-      }))
-      .filter((entry) => Number.isFinite(entry.bottom) && entry.bottom > 0)
-      .sort((a, b) => a.bottom - b.bottom);
+    if (totalPages <= 1 || naturalCandidates.length === 0) return;
+
+    const candidates = naturalCandidates
+      .map((el, index) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          el,
+          index,
+          top: (rect.top - containerRect.top) / zoomFactor,
+          bottom: (rect.bottom - containerRect.top) / zoomFactor,
+        };
+      })
+      .filter((entry) =>
+        Number.isFinite(entry.top) &&
+        Number.isFinite(entry.bottom) &&
+        entry.bottom > 0
+      );
 
     const breaks: { el: HTMLElement; pageIndex: number }[] = [];
-    let lastBottom = 0;
+    let lastChosenIndex = -1;
 
-    // 4) Mỗi mốc trang chọn khối cuối cùng nằm trong trang đó. Nếu một khối lớn hơn 1 trang,
-    //    không chèn gap giữa khối; ưu tiên giữ nguyên nội dung thay vì phá cấu trúc Word.
-    for (let pageIndex = 1; pageIndex < totalPages; pageIndex++) {
-      const target = pageIndex * WORD_PAGE_HEIGHT_PX;
-      let chosen: { el: HTMLElement; bottom: number } | null = null;
+    /*
+     * Mỗi gap cao WORD_PAGE_GAP_PX được chèn giữa hai trang.
+     * Vì vậy mốc của trang 3 trở đi phải tính cả các gap đã xuất hiện phía trước:
+     *   trang 2 -> 1 * PAGE_HEIGHT
+     *   trang 3 -> 2 * PAGE_HEIGHT + 1 * PAGE_GAP
+     *   trang 4 -> 3 * PAGE_HEIGHT + 2 * PAGE_GAP
+     * Nếu không cộng phần gap, các trang sau sẽ bị lệch và nhãn Trang N/N xuất hiện
+     * sai vị trí.
+     */
+    for (let pageIndex = 2; pageIndex <= totalPages; pageIndex++) {
+      const target =
+        (pageIndex - 1) * WORD_PAGE_HEIGHT_PX +
+        (pageIndex - 2) * WORD_PAGE_GAP_PX;
 
-      for (const entry of boundaryEntries) {
-        if (entry.bottom <= target + 1 && entry.bottom > lastBottom + 0.5) {
-          chosen = entry;
-          continue;
-        }
-        if (entry.bottom > target + 1) break;
+      const available = candidates.filter(
+        (entry) => entry.index > lastChosenIndex
+      );
+      if (available.length === 0) break;
+
+      // Ưu tiên block cuối cùng nằm trước mốc trang.
+      let chosen = available
+        .filter((entry) => entry.bottom <= target + 1)
+        .at(-1);
+
+      // Nếu mốc rơi giữa một block lớn, không được bỏ mất trang kế tiếp.
+      // Chọn block đầu tiên vượt mốc làm biên an toàn.
+      if (!chosen) {
+        chosen = available.find((entry) => entry.bottom > target + 1);
       }
 
-      if (!chosen) continue;
+      // Fallback cuối cùng: luôn có một biên DOM nếu tài liệu còn block phía sau.
+      if (!chosen) chosen = available[available.length - 1];
+      if (!chosen) break;
 
       breaks.push({ el: chosen.el, pageIndex });
-      lastBottom = chosen.bottom;
+      lastChosenIndex = chosen.index;
     }
 
-    // 5) Chèn từ cuối về đầu để tọa độ/DOM của các điểm đã đo không bị thay đổi.
+    // Chèn từ cuối về đầu để các tọa độ đã đo không bị thay đổi trong lúc chèn.
     for (let i = breaks.length - 1; i >= 0; i--) {
       const item = breaks[i];
-      if (!item.el.parentElement || item.el.parentElement !== container) continue;
-      item.el.insertAdjacentElement('afterend', buildPageGapElement(item.pageIndex, totalPages));
+      if (item.el.parentElement !== container) continue;
+      item.el.insertAdjacentElement(
+        'afterend',
+        buildPageGapElement(item.pageIndex, totalPages)
+      );
     }
   };
 
@@ -746,7 +891,7 @@ export default function HomePage() {
   const getCleanEditorSnapshot = (): { html: string; text: string } => {
     if (!editorRef.current) return { html: '', text: '' };
     const clone = editorRef.current.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}]`).forEach((el) => el.remove());
+    clone.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}], [${WORD_PAGE_BADGE_ATTR}]`).forEach((el) => el.remove());
     return { html: clone.innerHTML, text: clone.textContent || '' };
   };
 
@@ -1003,6 +1148,42 @@ export default function HomePage() {
     restoreSelection();
     document.execCommand('insertHTML', false, tableHtml);
     handleInput();
+  };
+
+  /** Xóa ô bảng Word tại vị trí con trỏ. Không ảnh hưởng các phần tử ngoài bảng. */
+  const deleteWordTableCell = () => {
+    if (!editorRef.current) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      alert('Vui lòng đặt con trỏ vào ô cần xóa trong bảng Word.');
+      return;
+    }
+
+    const anchor = selection.anchorNode;
+    const cell = (anchor instanceof HTMLElement
+      ? anchor.closest('td, th')
+      : anchor?.parentElement?.closest('td, th')) as HTMLTableCellElement | null;
+
+    if (!cell || !editorRef.current.contains(cell)) {
+      alert('Vui lòng đặt con trỏ vào ô cần xóa trong bảng Word.');
+      return;
+    }
+
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    const table = row?.closest('table') as HTMLTableElement | null;
+    if (!row || !table) return;
+
+    cell.remove();
+
+    // Nếu hàng không còn ô nào, xóa hàng. Nếu bảng không còn hàng nào, xóa bảng.
+    if (row.cells.length === 0) row.remove();
+    if (table.rows.length === 0) table.remove();
+
+    setTimeout(() => {
+      handleInput();
+      scheduleWordPagination();
+    }, 0);
   };
 
   const handleReset = async () => {
@@ -1475,6 +1656,13 @@ export default function HomePage() {
         <path d="M4 10h16M4 15h16M10 5v14M15 5v14" />
       </svg>
     ),
+    DeleteCell: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <rect x="4" y="5" width="16" height="14" rx="1.6" />
+        <path d="M4 10h16M4 15h16M10 5v14M15 5v5" />
+        <path d="m15.5 14.5 4 4m0-4-4 4" />
+      </svg>
+    ),
     Globe: (p: React.SVGProps<SVGSVGElement>) => (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
         <circle cx="12" cy="12" r="8" />
@@ -1908,6 +2096,14 @@ export default function HomePage() {
       const activeSheetData = excelSheets[activeSheet];
       const hasError = !!activeSheetData?.error;
 
+      // Phân trang Excel được tính bởi helper thuần ở ngoài component.
+      // Không truyền trực tiếp state setter/state proxy vào hàm có khả năng bị React Compiler
+      // hiểu nhầm là có thể chỉnh sửa state.
+      const excelPageRanges = activeSheetData
+        ? getExcelPageRangesStable(activeSheetData, activeSheet, excelRowHeights)
+        : [];
+      const excelTotalPages = Math.max(1, excelPageRanges.length);
+
       return (
         <div key={contentKey} className="flex flex-col h-full w-full min-w-0 bg-[#F1F3F1] overflow-hidden animate-riseIn">
           {/* Thanh trên: nhãn loại file + nút in */}
@@ -2156,117 +2352,155 @@ export default function HomePage() {
             ) : !activeSheetData || activeSheetData.rows.length === 0 ? (
               <div className="p-10 text-center text-slate-400 text-[13px]">Bảng tính trống.</div>
             ) : (
-              <table
-                className="border-collapse select-none"
-                style={{ fontFamily: 'Calibri, Arial, sans-serif' }}
-              >
-                <thead>
-                  <tr>
-                    <th className="sticky top-0 left-0 z-30 bg-slate-100 border border-slate-300 w-11 h-6 text-[11px]" />
-                    {Array.from({ length: activeSheetData.endCol - activeSheetData.startCol + 1 }, (_, i) => activeSheetData.startCol + i).map((c) => (
-                      <th
-                        key={c}
-                        style={{ width: getExcelColWidth(activeSheet, c) }}
-                        className="relative sticky top-0 z-20 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 px-2 h-6"
+              <div className="flex flex-col items-center w-full">
+                {excelPageRanges.map((page, pageIdx) => (
+                  <React.Fragment key={`excel-page-${pageIdx}`}>
+                    {pageIdx > 0 && (
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          height: EXCEL_PAGE_GAP_PX,
+                          minHeight: EXCEL_PAGE_GAP_PX,
+                          width: '100%',
+                          background: '#F1F3F1',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxSizing: 'border-box',
+                          flex: '0 0 auto',
+                        }}
                       >
-                        {colLetter(c)}
-                        {/* Tay kéo giãn độ rộng cột — chuột hoặc chạm */}
-                        <div
-                          onMouseDown={(e) => startExcelColResize(e, c)}
-                          onTouchStart={(e) => startExcelColResize(e, c)}
-                          title="Kéo để đổi độ rộng cột"
-                          className="absolute top-0 right-0 h-full w-2 -mr-1 cursor-col-resize z-30 touch-none group/handle"
+                        <span
+                          style={{
+                            background: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: 9999,
+                            padding: '3px 12px',
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            color: '#64748b',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            fontFamily: 'Inter, ui-sans-serif, sans-serif',
+                            whiteSpace: 'nowrap',
+                          }}
                         >
-                          <div className="h-full w-px mx-auto bg-transparent group-hover/handle:bg-teal-400" />
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeSheetData.rows.map((rowCells) => {
-                    const absRow = rowCells[0]?.r ?? 0;
-                    const rowHeight = getExcelRowHeight(activeSheet, absRow);
-                    return (
-                      <tr key={absRow} style={{ height: rowHeight }}>
-                        <td
-                          style={{ height: rowHeight }}
-                          className="relative sticky left-0 z-10 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 text-center w-11"
-                        >
-                          {absRow + 1}
-                          {/* Tay kéo giãn chiều cao dòng — chuột hoặc chạm */}
-                          <div
-                            onMouseDown={(e) => startExcelRowResize(e, absRow)}
-                            onTouchStart={(e) => startExcelRowResize(e, absRow)}
-                            title="Kéo để đổi chiều cao dòng"
-                            className="absolute bottom-0 left-0 w-full h-2 -mb-1 cursor-row-resize z-30 touch-none group/handle"
-                          >
-                            <div className="w-full h-px my-auto bg-transparent group-hover/handle:bg-teal-400" />
-                          </div>
-                        </td>
-                        {rowCells.map((cell) => {
-                          const key = `${cell.r}-${cell.c}`;
-                          if (activeSheetData.skip.has(key)) return null;
-                          const merge = activeSheetData.merges[key];
-                          const isSelected = selectedCell?.r === cell.r && selectedCell?.c === cell.c;
-                          return (
-                            <td
-                              key={key}
-                              rowSpan={merge?.rowSpan}
-                              colSpan={merge?.colSpan}
-                              contentEditable
-                              suppressContentEditableWarning
-                              spellCheck={false}
-                              onFocus={() => {
-                                setSelectedCell(cell);
-                                setExcelFormulaValue(cell.text);
-                              }}
-                              onClick={() => {
-                                setSelectedCell(cell);
-                                setExcelFormulaValue(cell.text);
-                              }}
-                              onBlur={(e) => {
-                                const newText = (e.currentTarget.textContent || '').trim();
-                                if (newText !== cell.text) {
-                                  handleExcelCellEdit(activeSheet, cell.r, cell.c, newText);
-                                }
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  (e.currentTarget as HTMLTableCellElement).blur();
-                                }
-                                if (e.key === 'Escape') {
-                                  e.currentTarget.textContent = cell.text;
-                                  (e.currentTarget as HTMLTableCellElement).blur();
-                                }
-                              }}
-                              style={{
-                                fontWeight: cell.style?.bold ? 700 : 400,
-                                fontStyle: cell.style?.italic ? 'italic' : 'normal',
-                                textDecoration: cell.style?.underline ? 'underline' : 'none',
-                                textAlign: cell.style?.align || 'left',
-                                color: cell.style?.color || undefined,
-                                backgroundColor: !isSelected ? cell.style?.bg || undefined : undefined,
-                                fontSize: cell.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
-                                width: getExcelColWidth(activeSheet, cell.c),
-                                height: rowHeight,
-                              }}
-                              className={`border px-2 py-1 text-[12.5px] align-top whitespace-normal break-words overflow-hidden cursor-text outline-none focus:bg-amber-50/60 ${
-                                isSelected
-                                  ? 'border-teal-600 ring-2 ring-inset ring-teal-600 bg-teal-50/70'
-                                  : 'border-slate-200 hover:bg-slate-50'
-                              }`}
+                          Trang {pageIdx + 1}/{excelTotalPages}
+                        </span>
+                      </div>
+                    )}
+
+                    <table
+                      className="border-collapse select-none"
+                      style={{ fontFamily: 'Calibri, Arial, sans-serif' }}
+                    >
+                      <thead>
+                        <tr>
+                          <th className="sticky top-0 left-0 z-30 bg-slate-100 border border-slate-300 w-11 h-6 text-[11px]" />
+                          {Array.from({ length: activeSheetData.endCol - activeSheetData.startCol + 1 }, (_, i) => activeSheetData.startCol + i).map((c) => (
+                            <th
+                              key={c}
+                              style={{ width: getExcelColWidth(activeSheet, c) }}
+                              className="relative sticky top-0 z-20 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 px-2 h-6"
                             >
-                              {cell.text}
-                            </td>
+                              {colLetter(c)}
+                              <div
+                                onMouseDown={(e) => startExcelColResize(e, c)}
+                                onTouchStart={(e) => startExcelColResize(e, c)}
+                                title="Kéo để đổi độ rộng cột"
+                                className="absolute top-0 right-0 h-full w-2 -mr-1 cursor-col-resize z-30 touch-none group/handle"
+                              >
+                                <div className="h-full w-px mx-auto bg-transparent group-hover/handle:bg-teal-400" />
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeSheetData.rows.slice(page.start, page.end).map((rowCells) => {
+                          const absRow = rowCells[0]?.r ?? 0;
+                          const rowHeight = getExcelRowHeight(activeSheet, absRow);
+                          return (
+                            <tr key={absRow} style={{ height: rowHeight }}>
+                              <td
+                                style={{ height: rowHeight }}
+                                className="relative sticky left-0 z-10 bg-slate-100 border border-slate-300 text-[11px] font-semibold text-slate-600 text-center w-11"
+                              >
+                                {absRow + 1}
+                                <div
+                                  onMouseDown={(e) => startExcelRowResize(e, absRow)}
+                                  onTouchStart={(e) => startExcelRowResize(e, absRow)}
+                                  title="Kéo để đổi chiều cao dòng"
+                                  className="absolute bottom-0 left-0 w-full h-2 -mb-1 cursor-row-resize z-30 touch-none group/handle"
+                                >
+                                  <div className="w-full h-px my-auto bg-transparent group-hover/handle:bg-teal-400" />
+                                </div>
+                              </td>
+                              {rowCells.map((cell) => {
+                                const key = `${cell.r}-${cell.c}`;
+                                if (activeSheetData.skip.has(key)) return null;
+                                const merge = activeSheetData.merges[key];
+                                const isSelected = selectedCell?.r === cell.r && selectedCell?.c === cell.c;
+                                return (
+                                  <td
+                                    key={key}
+                                    rowSpan={merge?.rowSpan}
+                                    colSpan={merge?.colSpan}
+                                    contentEditable
+                                    suppressContentEditableWarning
+                                    spellCheck={false}
+                                    onFocus={() => {
+                                      setSelectedCell(cell);
+                                      setExcelFormulaValue(cell.text);
+                                    }}
+                                    onClick={() => {
+                                      setSelectedCell(cell);
+                                      setExcelFormulaValue(cell.text);
+                                    }}
+                                    onBlur={(e) => {
+                                      const newText = (e.currentTarget.textContent || '').trim();
+                                      if (newText !== cell.text) {
+                                        handleExcelCellEdit(activeSheet, cell.r, cell.c, newText);
+                                      }
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        (e.currentTarget as HTMLTableCellElement).blur();
+                                      }
+                                      if (e.key === 'Escape') {
+                                        e.currentTarget.textContent = cell.text;
+                                        (e.currentTarget as HTMLTableCellElement).blur();
+                                      }
+                                    }}
+                                    style={{
+                                      fontWeight: cell.style?.bold ? 700 : 400,
+                                      fontStyle: cell.style?.italic ? 'italic' : 'normal',
+                                      textDecoration: cell.style?.underline ? 'underline' : 'none',
+                                      textAlign: cell.style?.align || 'left',
+                                      color: cell.style?.color || undefined,
+                                      backgroundColor: !isSelected ? cell.style?.bg || undefined : undefined,
+                                      fontSize: cell.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
+                                      width: getExcelColWidth(activeSheet, cell.c),
+                                      height: rowHeight,
+                                    }}
+                                    className={`border px-2 py-1 text-[12.5px] align-top whitespace-normal break-words overflow-hidden cursor-text outline-none focus:bg-amber-50/60 ${
+                                      isSelected
+                                        ? 'border-teal-600 ring-2 ring-inset ring-teal-600 bg-teal-50/70'
+                                        : 'border-slate-200 hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {cell.text}
+                                  </td>
+                                );
+                              })}
+                            </tr>
                           );
                         })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                      </tbody>
+                    </table>
+                  </React.Fragment>
+                ))}
+              </div>
             )}
           </div>
 
@@ -2535,7 +2769,7 @@ export default function HomePage() {
 
               <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              {/* Nhóm: Chèn — hiện chỉ có Chèn bảng, gọi insertWordTable() */}
+              {/* Nhóm: Chèn bảng + xóa ô bảng Word */}
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <div className="flex items-center gap-1">
                   <button
@@ -2551,6 +2785,17 @@ export default function HomePage() {
                   >
                     <Icon.Table className="w-4 h-4" />
                     <span className="text-[11.5px] font-semibold">Chèn bảng</span>
+                  </button>
+                  <button
+                    type="button"
+                    title="Xóa ô bảng Word"
+                    aria-label="Xóa ô bảng Word"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={deleteWordTableCell}
+                    className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-rose-600 hover:bg-rose-50 shrink-0 transition-colors duration-150 cursor-pointer"
+                  >
+                    <Icon.DeleteCell className="w-4 h-4" />
+                    <span className="text-[11.5px] font-semibold">Xóa ô</span>
                   </button>
                 </div>
                 <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Chèn</span>
@@ -2638,6 +2883,7 @@ export default function HomePage() {
                   className="bg-white shadow-[0_1px_1px_rgba(15,50,55,0.05),0_20px_40px_-16px_rgba(15,50,55,0.18)] border border-slate-200 p-16 min-h-[297mm] h-auto outline-none text-black prose prose-slate focus:ring-4 focus:ring-teal-500/20 focus:border-teal-300 rounded-sm transition-shadow duration-300 animate-popIn [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-3 [&_td]:border [&_td]:border-black [&_td]:p-1.5 [&_td]:overflow-hidden [&_td]:text-xs [&_th]:border [&_th]:border-black [&_th]:p-1.5 print:shadow-none print:border-none print:w-full print:p-0 print:m-0"
                   style={{
                     boxSizing: 'border-box',
+                    position: 'relative',
                     wordBreak: 'break-word',
                     fontFamily: '"Times New Roman", Times, serif',
                     fontSize: '13pt',
@@ -2669,7 +2915,7 @@ export default function HomePage() {
         /* Khoảng trống phân trang chỉ phục vụ giao diện soạn thảo, không phải nội dung Word. */
         [data-page-gap] { break-inside: avoid; }
         @media print {
-          [data-page-gap] { display: none !important; }
+          [data-page-gap], [data-page-badge] { display: none !important; }
         }
 
         @keyframes riseIn {
