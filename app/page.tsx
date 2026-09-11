@@ -130,7 +130,6 @@ export default function HomePage() {
   const WORD_PAGE_GAP_PX = 56; // chiều cao khoảng trống thật giữa 2 trang
   const WORD_PAGE_GAP_ATTR = 'data-page-gap'; // đánh dấu khối ngăn trang để luôn loại bỏ trước khi lưu
   const WORD_PAGE_BADGE_ATTR = 'data-page-badge'; // nhãn đầu trang, chỉ hiển thị, không thuộc nội dung Word
-  const [wordPageCount, setWordPageCount] = useState<number>(1);
   // --- Zoom cho trình xem ảnh (.jpg/.jpeg/.png/.gif/.webp) ---
   const IMAGE_ZOOM_MIN = 25;
   const IMAGE_ZOOM_MAX = 300;
@@ -152,8 +151,6 @@ export default function HomePage() {
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedRangeRef = useRef<Range | null>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
-  const highlightInputRef = useRef<HTMLInputElement>(null);
 
   // Trạng thái thanh công cụ định dạng (ribbon) kiểu Word
   const [activeFormats, setActiveFormats] = useState<Record<string, boolean>>({});
@@ -692,8 +689,8 @@ export default function HomePage() {
     }) as HTMLElement[];
   };
 
-  /** Dựng 1 khối ngăn trang thật: khoảng trống màu nền workspace + nhãn "Trang k/N", không thể chỉnh sửa */
-  const buildPageGapElement = (pageIndex: number, totalPages: number): HTMLDivElement => {
+  /** Dựng khối ngăn giữa các trang Word. Không hiển thị/đánh số trang. */
+  const buildPageGapElement = (): HTMLDivElement => {
     const gap = document.createElement('div');
     gap.setAttribute(WORD_PAGE_GAP_ATTR, 'true');
     gap.setAttribute('contenteditable', 'false');
@@ -704,64 +701,14 @@ export default function HomePage() {
       'width:calc(100% + 128px)',
       'margin:0 -64px',
       'background:#F1F3F1',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
-      'position:relative',
+      'display:block',
       'user-select:none',
       'pointer-events:none',
       'box-sizing:border-box',
       'flex:0 0 auto',
       'box-shadow: inset 0 8px 10px -8px rgba(15,50,55,0.12), inset 0 -8px 10px -8px rgba(15,50,55,0.12)',
     ].join(';');
-
-    const badge = document.createElement('span');
-    badge.textContent = `Trang ${pageIndex}/${totalPages}`;
-    badge.style.cssText = [
-      'background:#ffffff',
-      'border:1px solid #cbd5e1',
-      'border-radius:9999px',
-      'padding:3px 12px',
-      'font-size:10.5px',
-      'font-weight:600',
-      'color:#64748b',
-      'box-shadow:0 1px 2px rgba(0,0,0,0.05)',
-      'font-family:Inter, ui-sans-serif, sans-serif',
-      'white-space:nowrap',
-    ].join(';');
-
-    gap.appendChild(badge);
     return gap;
-  };
-
-  /** Nhãn trang ở đầu mỗi trang. Đây là phần tử tuyệt đối, không chiếm chỗ và không thuộc nội dung Word. */
-  const buildPageStartBadge = (pageIndex: number, totalPages: number): HTMLDivElement => {
-    const badge = document.createElement('div');
-    badge.setAttribute(WORD_PAGE_BADGE_ATTR, 'true');
-    badge.setAttribute('contenteditable', 'false');
-    badge.setAttribute('aria-hidden', 'true');
-    badge.style.cssText = [
-      'position:absolute',
-      'top:10px',
-      'left:50%',
-      'transform:translateX(-50%)',
-      'z-index:5',
-      'pointer-events:none',
-      'user-select:none',
-      'background:#ffffff',
-      'border:1px solid #cbd5e1',
-      'border-radius:9999px',
-      'padding:3px 12px',
-      'font-size:10.5px',
-      'font-weight:600',
-      'color:#64748b',
-      'box-shadow:0 1px 2px rgba(0,0,0,0.05)',
-      'font-family:Inter, ui-sans-serif, sans-serif',
-      'white-space:nowrap',
-      'line-height:1.2',
-    ].join(';');
-    badge.textContent = `Trang ${pageIndex}/${totalPages}`;
-    return badge;
   };
 
   /**
@@ -801,11 +748,6 @@ export default function HomePage() {
       1,
       Math.ceil(Math.max(1, naturalContentBottom - 0.5) / WORD_PAGE_HEIGHT_PX)
     );
-    setWordPageCount(totalPages);
-
-    // Trang 1 phải có nhãn Trang 1/N ngay tại đầu trang. Nhãn là absolute nên không
-    // làm thay đổi chiều cao/nội dung, và được loại khỏi snapshot khi lưu.
-    container.insertBefore(buildPageStartBadge(1, totalPages), container.firstChild);
 
     if (totalPages <= 1 || naturalCandidates.length === 0) return;
 
@@ -872,20 +814,15 @@ export default function HomePage() {
       if (item.el.parentElement !== container) continue;
       item.el.insertAdjacentElement(
         'afterend',
-        buildPageGapElement(item.pageIndex, totalPages)
+        buildPageGapElement()
       );
     }
   };
 
   /** Lên lịch phân trang sau khi browser đã hoàn tất layout; có thêm 1 nhịp dự phòng cho font/ảnh. */
-  const scheduleWordPagination = () => {
-    if (!editorRef.current || isLoading) return;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        insertRealPageGaps();
-      });
-    });
-  };
+  // Đã tắt hoàn toàn chức năng tách trang Word theo yêu cầu.
+  // Giữ hàm để không ảnh hưởng các luồng autosave/resize hiện có.
+  const scheduleWordPagination = () => {};
 
   /** Lấy nội dung HTML thật (đã loại bỏ mọi khối ngăn trang) để lưu/đếm từ — không bao giờ lưu khối trang trí này */
   const getCleanEditorSnapshot = (): { html: string; text: string } => {
@@ -923,7 +860,6 @@ export default function HomePage() {
       }
       // Chỉ dựng lại khoảng trống trang SAU KHI người dùng đã tạm dừng gõ (đủ 800ms) và đã lưu xong,
       // tránh thay đổi cấu trúc DOM ngay giữa lúc đang gõ (có thể làm nhảy con trỏ).
-      scheduleWordPagination();
     }, 800);
   };
 
@@ -976,31 +912,7 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isResizingWordTableCol]);
 
-  // Dựng lại khoảng trống trang thật sau khi nội dung/zoom thay đổi.
-  // ResizeObserver giúp phân trang lại khi chiều rộng vùng Word thay đổi (xoay màn hình,
-  // kéo sidebar, thay đổi kích thước cửa sổ), vì khi đó độ xuống dòng cũng thay đổi.
-  useEffect(() => {
-    if (!editorRef.current || isLoading) return;
-
-    scheduleWordPagination();
-
-    const editor = editorRef.current;
-    const resizeObserver = new ResizeObserver(() => scheduleWordPagination());
-    resizeObserver.observe(editor);
-
-    const handleWindowResize = () => scheduleWordPagination();
-    window.addEventListener('resize', handleWindowResize);
-
-    const handleLoad = () => scheduleWordPagination();
-    window.addEventListener('load', handleLoad);
-
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', handleWindowResize);
-      window.removeEventListener('load', handleLoad);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [htmlContent, wordZoom, isLoading]);
+  // Tách trang Word đã được tắt hoàn toàn; không tạo gap/nhãn/observer phân trang.
 
   const refreshActiveFormats = () => {
     try {
@@ -1022,19 +934,6 @@ export default function HomePage() {
       // queryCommandState có thể ném lỗi ngoài vùng contentEditable — bỏ qua an toàn
     }
   };
-
-  // Phím tắt Ctrl+K (hoặc Cmd+K trên macOS) — focus vào ô tìm kiếm tài liệu ở Header
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        headerSearchRef.current?.focus();
-      }
-    };
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
-
 
   useEffect(() => {
     document.addEventListener('selectionchange', refreshActiveFormats);
@@ -1122,6 +1021,153 @@ export default function HomePage() {
     execFormat(type, value);
   };
 
+  // ===== CÁC CHỨC NĂNG CƠ BẢN CHO TẤT CẢ FILE WORD =====
+  // Các thao tác dưới đây chỉ tác động lên vùng soạn thảo Word hiện tại,
+  // không thay đổi giao diện hay dữ liệu của các module khác.
+  const selectAllWord = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editorRef.current);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    refreshActiveFormats();
+  };
+
+  const copyWordSelection = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    try {
+      document.execCommand('copy');
+    } catch {
+      // Trình duyệt có thể chặn clipboard; không làm ảnh hưởng tài liệu.
+    }
+  };
+
+  const cutWordSelection = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    try {
+      const ok = document.execCommand('cut');
+      if (ok) handleInput();
+    } catch {
+      // Bỏ qua nếu trình duyệt không cho phép thao tác clipboard.
+    }
+  };
+
+  const pasteWordText = async () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    restoreSelection();
+
+    try {
+      if (navigator.clipboard?.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          document.execCommand('insertText', false, text);
+          handleInput();
+        }
+        return;
+      }
+    } catch {
+      // Fallback bên dưới cho trình duyệt không cấp quyền Clipboard API.
+    }
+
+    try {
+      document.execCommand('paste');
+      handleInput();
+    } catch {
+      alert('Trình duyệt không cho phép dán tự động. Vui lòng dùng Ctrl+V.');
+    }
+  };
+
+  const clearWordFormatting = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    restoreSelection();
+    document.execCommand('removeFormat', false);
+    document.execCommand('unlink', false);
+    handleInput();
+    refreshActiveFormats();
+  };
+
+  const findAndReplaceWordText = () => {
+    if (!editorRef.current) return;
+
+    const findText = window.prompt('Tìm nội dung:', '');
+    if (findText === null || findText === '') return;
+    const replaceText = window.prompt('Thay thế bằng:', '');
+    if (replaceText === null) return;
+
+    const walker = document.createTreeWalker(editorRef.current, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let currentNode: Node | null = walker.nextNode();
+    while (currentNode) {
+      textNodes.push(currentNode as Text);
+      currentNode = walker.nextNode();
+    }
+
+    let count = 0;
+    textNodes.forEach((node) => {
+      const value = node.nodeValue || '';
+      if (!value.includes(findText)) return;
+      const occurrences = value.split(findText).length - 1;
+      if (occurrences > 0) {
+        node.nodeValue = value.split(findText).join(replaceText);
+        count += occurrences;
+      }
+    });
+
+    if (count > 0) {
+      handleInput();
+      alert(`Đã thay thế ${count} vị trí.`);
+    } else {
+      alert('Không tìm thấy nội dung cần thay thế.');
+    }
+  };
+
+  // Phím tắt Ctrl+K (hoặc Cmd+K trên macOS) — focus vào ô tìm kiếm tài liệu ở Header
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const editor = editorRef.current;
+      const target = e.target as HTMLElement | null;
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (mod && e.key.toLowerCase() === 'k' && !editor?.contains(target)) {
+        e.preventDefault();
+        headerSearchRef.current?.focus();
+        return;
+      }
+
+      // Phím tắt Word chỉ chạy khi con trỏ đang ở vùng soạn thảo Word.
+      if (!editor || !editor.contains(target)) return;
+
+      if (mod && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        selectAllWord();
+      } else if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleInput();
+      } else if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        findAndReplaceWordText();
+      }
+    };
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+  const insertWordLink = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    restoreSelection();
+    const url = window.prompt('Nhập liên kết (URL):', 'https://');
+    if (url === null || url.trim() === '') return;
+    document.execCommand('createLink', false, url.trim());
+    handleInput();
+  };
+
   /** Chèn 1 bảng mới vào vị trí con trỏ trong tài liệu Word (hỏi số dòng/cột trước) */
   const insertWordTable = () => {
     if (!editorRef.current) return;
@@ -1182,7 +1228,34 @@ export default function HomePage() {
 
     setTimeout(() => {
       handleInput();
-      scheduleWordPagination();
+    }, 0);
+  };
+
+
+  /** Xóa toàn bộ bảng Word tại vị trí con trỏ. Không ảnh hưởng nội dung ngoài bảng. */
+  const deleteWordTable = () => {
+    if (!editorRef.current) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      alert('Vui lòng đặt con trỏ vào bảng cần xóa.');
+      return;
+    }
+
+    const anchor = selection.anchorNode;
+    const table = (anchor instanceof HTMLElement
+      ? anchor.closest('table')
+      : anchor?.parentElement?.closest('table')) as HTMLTableElement | null;
+
+    if (!table || !editorRef.current.contains(table)) {
+      alert('Vui lòng đặt con trỏ vào bảng cần xóa.');
+      return;
+    }
+
+    table.remove();
+
+    setTimeout(() => {
+      handleInput();
     }, 0);
   };
 
@@ -1663,6 +1736,13 @@ export default function HomePage() {
         <path d="m15.5 14.5 4 4m0-4-4 4" />
       </svg>
     ),
+    DeleteTable: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <rect x="4" y="5" width="16" height="14" rx="1.6" />
+        <path d="M4 10h16M4 15h16M10 5v14M15 5v5" />
+        <path d="m15 13.5 5 5m0-5-5 5" />
+      </svg>
+    ),
     Globe: (p: React.SVGProps<SVGSVGElement>) => (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...p}>
         <circle cx="12" cy="12" r="8" />
@@ -1940,6 +2020,16 @@ export default function HomePage() {
   const currentFileType = selectedFile ? getFileType(selectedFile) : null;
   const currentSyncOk = currentFileType === 'excel' ? isExcelSaved : isSaved;
 
+  const openWordTextColorPicker = () => {
+    saveSelection();
+    document.getElementById('word-text-color-picker')?.click();
+  };
+
+  const openWordHighlightPicker = () => {
+    saveSelection();
+    document.getElementById('word-highlight-picker')?.click();
+  };
+
   const renderContent = () => {
     if (!selectedFile) {
       return (
@@ -2096,13 +2186,8 @@ export default function HomePage() {
       const activeSheetData = excelSheets[activeSheet];
       const hasError = !!activeSheetData?.error;
 
-      // Phân trang Excel được tính bởi helper thuần ở ngoài component.
-      // Không truyền trực tiếp state setter/state proxy vào hàm có khả năng bị React Compiler
-      // hiểu nhầm là có thể chỉnh sửa state.
-      const excelPageRanges = activeSheetData
-        ? getExcelPageRangesStable(activeSheetData, activeSheet, excelRowHeights)
-        : [];
-      const excelTotalPages = Math.max(1, excelPageRanges.length);
+      // Đã tắt hoàn toàn chức năng tách trang Excel theo yêu cầu.
+      // Toàn bộ dữ liệu của sheet được hiển thị liên tục trong một bảng duy nhất.
 
       return (
         <div key={contentKey} className="flex flex-col h-full w-full min-w-0 bg-[#F1F3F1] overflow-hidden animate-riseIn">
@@ -2353,42 +2438,6 @@ export default function HomePage() {
               <div className="p-10 text-center text-slate-400 text-[13px]">Bảng tính trống.</div>
             ) : (
               <div className="flex flex-col items-center w-full">
-                {excelPageRanges.map((page, pageIdx) => (
-                  <React.Fragment key={`excel-page-${pageIdx}`}>
-                    {pageIdx > 0 && (
-                      <div
-                        aria-hidden="true"
-                        style={{
-                          height: EXCEL_PAGE_GAP_PX,
-                          minHeight: EXCEL_PAGE_GAP_PX,
-                          width: '100%',
-                          background: '#F1F3F1',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          boxSizing: 'border-box',
-                          flex: '0 0 auto',
-                        }}
-                      >
-                        <span
-                          style={{
-                            background: '#ffffff',
-                            border: '1px solid #cbd5e1',
-                            borderRadius: 9999,
-                            padding: '3px 12px',
-                            fontSize: 10.5,
-                            fontWeight: 600,
-                            color: '#64748b',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                            fontFamily: 'Inter, ui-sans-serif, sans-serif',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          Trang {pageIdx + 1}/{excelTotalPages}
-                        </span>
-                      </div>
-                    )}
-
                     <table
                       className="border-collapse select-none"
                       style={{ fontFamily: 'Calibri, Arial, sans-serif' }}
@@ -2416,7 +2465,7 @@ export default function HomePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {activeSheetData.rows.slice(page.start, page.end).map((rowCells) => {
+                        {activeSheetData.rows.map((rowCells) => {
                           const absRow = rowCells[0]?.r ?? 0;
                           const rowHeight = getExcelRowHeight(activeSheet, absRow);
                           return (
@@ -2498,8 +2547,6 @@ export default function HomePage() {
                         })}
                       </tbody>
                     </table>
-                  </React.Fragment>
-                ))}
               </div>
             )}
           </div>
@@ -2613,6 +2660,36 @@ export default function HomePage() {
 
               <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
+              {/* Nhóm: Chức năng cơ bản Word */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <RibbonBtn title="Sao chép" onClick={copyWordSelection}>
+                    <span className="text-[11px] font-bold">Copy</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Cắt" onClick={cutWordSelection}>
+                    <span className="text-[11px] font-bold">Cut</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Dán" onClick={() => { void pasteWordText(); }}>
+                    <span className="text-[11px] font-bold">Paste</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Chọn tất cả" onClick={selectAllWord}>
+                    <span className="text-[10px] font-bold">All</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Xóa định dạng" onClick={clearWordFormatting}>
+                    <span className="text-[11px] font-bold">Tx</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Tìm và thay thế" onClick={findAndReplaceWordText}>
+                    <span className="text-[10px] font-bold">Tìm</span>
+                  </RibbonBtn>
+                  <RibbonBtn title="Chèn liên kết" onClick={insertWordLink}>
+                    <span className="text-[12px] font-bold">🔗</span>
+                  </RibbonBtn>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Cơ bản</span>
+              </div>
+
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
+
               {/* Nhóm: Phông chữ */}
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <div className="flex items-center gap-1">
@@ -2664,21 +2741,21 @@ export default function HomePage() {
                   <RibbonBtn title="Gạch ngang" active={activeFormats.strikeThrough} onClick={() => execFormat('strikeThrough')}>
                     <Icon.Strike className="w-4 h-4" />
                   </RibbonBtn>
-                  <RibbonBtn title="Màu chữ" onClick={() => { saveSelection(); colorInputRef.current?.click(); }}>
+                  <RibbonBtn title="Màu chữ" onClick={openWordTextColorPicker}>
                     <Icon.TextColor className="w-4 h-4" />
                   </RibbonBtn>
                   <input
-                    ref={colorInputRef}
+                    id="word-text-color-picker"
                     type="color"
                     className="hidden"
                     onChange={(e) => applyColor('foreColor', e.target.value)}
                     aria-label="Chọn màu chữ"
                   />
-                  <RibbonBtn title="Tô sáng" onClick={() => { saveSelection(); highlightInputRef.current?.click(); }}>
+                  <RibbonBtn title="Tô sáng" onClick={openWordHighlightPicker}>
                     <Icon.Highlight className="w-4 h-4" />
                   </RibbonBtn>
                   <input
-                    ref={highlightInputRef}
+                    id="word-highlight-picker"
                     type="color"
                     defaultValue="#fef08a"
                     className="hidden"
@@ -2769,7 +2846,7 @@ export default function HomePage() {
 
               <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
 
-              {/* Nhóm: Chèn bảng + xóa ô bảng Word */}
+              {/* Nhóm: Chèn bảng + xóa ô/bảng Word */}
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <div className="flex items-center gap-1">
                   <button
@@ -2796,6 +2873,17 @@ export default function HomePage() {
                   >
                     <Icon.DeleteCell className="w-4 h-4" />
                     <span className="text-[11.5px] font-semibold">Xóa ô</span>
+                  </button>
+                  <button
+                    type="button"
+                    title="Xóa bảng Word"
+                    aria-label="Xóa bảng Word"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={deleteWordTable}
+                    className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-rose-700 hover:bg-rose-50 shrink-0 transition-colors duration-150 cursor-pointer"
+                  >
+                    <Icon.DeleteTable className="w-4 h-4" />
+                    <span className="text-[11.5px] font-semibold">Xóa bảng</span>
                   </button>
                 </div>
                 <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Chèn</span>
@@ -2912,7 +3000,7 @@ export default function HomePage() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-        /* Khoảng trống phân trang chỉ phục vụ giao diện soạn thảo, không phải nội dung Word. */
+        /* Khoảng trống giữa các trang chỉ phục vụ giao diện soạn thảo, không phải nội dung Word. */
         [data-page-gap] { break-inside: avoid; }
         @media print {
           [data-page-gap], [data-page-badge] { display: none !important; }
