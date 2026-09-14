@@ -172,6 +172,9 @@ export default function HomePage() {
     startY: number;
     startWidth: number;
     startHeight: number;
+    startLeft: number;
+    startTop: number;
+    direction: string;
   } | null>(null);
 
   // Trạng thái thanh công cụ định dạng (ribbon) kiểu Word
@@ -192,6 +195,8 @@ export default function HomePage() {
   const [isExcelSaved, setIsExcelSaved] = useState<boolean>(true);
   const [excelFormulaValue, setExcelFormulaValue] = useState<string>('');
   const excelHistoryRef = useRef<ExcelSheet[][]>([]);
+  const excelRedoRef = useRef<ExcelSheet[][]>([]);
+  const [excelSelection, setExcelSelection] = useState<{ sheetIdx: number; r1: number; c1: number; r2: number; c2: number } | null>(null);
   const excelSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const excelWorkbookRef = useRef<WorkBook | null>(null);
   const excelUtilsRef = useRef<XLSXUtils | null>(null);
@@ -281,8 +286,8 @@ export default function HomePage() {
     document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', stopResizing);
     document.addEventListener('touchcancel', stopResizing);
-    document.body.style.cursor = excelResizeRef.current?.type === 'row' ? 'row-resize' : 'col-resize';
-    document.body.style.userSelect = 'none';
+    if (editorRef.current) editorRef.current.style.cursor = excelResizeRef.current?.type === 'row' ? 'row-resize' : 'col-resize';
+    if (editorRef.current) editorRef.current.style.userSelect = 'none';
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -290,8 +295,8 @@ export default function HomePage() {
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('touchend', stopResizing);
       document.removeEventListener('touchcancel', stopResizing);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      if (editorRef.current) editorRef.current.style.cursor = '';
+      if (editorRef.current) editorRef.current.style.userSelect = '';
     };
   }, [isResizingExcelCell]);
 
@@ -463,6 +468,9 @@ export default function HomePage() {
         setActiveSheet(0);
         setExcelSheets([]);
         setSelectedCell(null);
+        setExcelSelection(null);
+        excelHistoryRef.current = [];
+        excelRedoRef.current = [];
         setIsExcelSaved(true);
         setExcelColWidths({});
         setExcelRowHeights({});
@@ -549,7 +557,7 @@ export default function HomePage() {
             for (let c = range.s.c; c <= range.e.c; c++) {
               const addr = XLSX.utils.encode_cell({ r, c });
               const cell = worksheet[addr];
-              const originalText = cell ? String(cell.w ?? cell.v ?? '') : '';
+              const originalText = cell ? String(cell.f ? `=${cell.f}` : (cell.w ?? cell.v ?? '')) : '';
               const originalStyle = readCellStyle(cell);
               const editKey = `${r}-${c}`;
               const edit = sheetEdits ? sheetEdits[editKey] : undefined;
@@ -658,26 +666,42 @@ export default function HomePage() {
         e.preventDefault();
         e.stopPropagation();
         const rect = shape.getBoundingClientRect();
-        // Góc dưới-phải: kéo để thay đổi kích thước tự do. Các vùng khác vẫn kéo để di chuyển.
-        const edge = 16;
-        const nearResizeCorner = e.clientX >= rect.right - edge && e.clientY >= rect.bottom - edge;
-        if (nearResizeCorner) {
+        // Resize tự do từ mọi cạnh/góc; vùng giữa dùng để kéo di chuyển.
+        const edge = 12;
+        const nearLeft = e.clientX >= rect.left - edge && e.clientX <= rect.left + edge;
+        const nearRight = e.clientX >= rect.right - edge && e.clientX <= rect.right + edge;
+        const nearTop = e.clientY >= rect.top - edge && e.clientY <= rect.top + edge;
+        const nearBottom = e.clientY >= rect.bottom - edge && e.clientY <= rect.bottom + edge;
+        let direction = '';
+        if (nearTop && nearLeft) direction = 'nw';
+        else if (nearTop && nearRight) direction = 'ne';
+        else if (nearBottom && nearLeft) direction = 'sw';
+        else if (nearBottom && nearRight) direction = 'se';
+        else if (nearLeft) direction = 'w';
+        else if (nearRight) direction = 'e';
+        else if (nearTop) direction = 'n';
+        else if (nearBottom) direction = 's';
+
+        const currentLeft = parseFloat(shape.dataset.shapeLeft || '0') || 0;
+        const currentTop = parseFloat(shape.dataset.shapeTop || '0') || 0;
+        if (direction) {
           shapeResizeRef.current = {
             el: shape,
             startX: e.clientX,
             startY: e.clientY,
             startWidth: rect.width,
             startHeight: rect.height,
+            startLeft: currentLeft,
+            startTop: currentTop,
+            direction,
           };
-          shape.style.cursor = 'nwse-resize';
+          shape.style.cursor = `${direction}-resize`;
           if (editorRef.current) {
-            editorRef.current.style.cursor = 'nwse-resize';
+            editorRef.current.style.cursor = `${direction}-resize`;
             editorRef.current.style.userSelect = 'none';
           }
           return;
         }
-        const currentLeft = parseFloat(shape.dataset.shapeLeft || '0') || 0;
-        const currentTop = parseFloat(shape.dataset.shapeTop || '0') || 0;
         shapeDragRef.current = {
           el: shape,
           startX: e.clientX,
@@ -940,15 +964,35 @@ export default function HomePage() {
       if (resize) {
         const dx = clientX - resize.startX;
         const dy = clientY - resize.startY;
-        const minWidth = resize.el.dataset.smartShape === 'diamond' ? 70 : 50;
-        const minHeight = resize.el.dataset.smartShape === 'diamond' ? 50 : 35;
-        const width = Math.max(minWidth, Math.round(resize.startWidth + dx));
-        const height = Math.max(minHeight, Math.round(resize.startHeight + dy));
+        const minWidth = resize.el.dataset.smartShape === 'diamond' ? 50 : 24;
+        const minHeight = resize.el.dataset.smartShape === 'line' ? 8 : (resize.el.dataset.smartShape === 'diamond' ? 36 : 24);
+        const dir = resize.direction;
+        let width = resize.startWidth;
+        let height = resize.startHeight;
+        let left = resize.startLeft;
+        let top = resize.startTop;
+
+        if (dir.includes('e')) width = Math.max(minWidth, Math.round(resize.startWidth + dx));
+        if (dir.includes('s')) height = Math.max(minHeight, Math.round(resize.startHeight + dy));
+        if (dir.includes('w')) {
+          width = Math.max(minWidth, Math.round(resize.startWidth - dx));
+          left = Math.round(resize.startLeft + dx);
+          if (width === minWidth) left = Math.round(resize.startLeft + resize.startWidth - minWidth);
+        }
+        if (dir.includes('n')) {
+          height = Math.max(minHeight, Math.round(resize.startHeight - dy));
+          top = Math.round(resize.startTop + dy);
+          if (height === minHeight) top = Math.round(resize.startTop + resize.startHeight - minHeight);
+        }
+
         resize.el.style.width = `${width}px`;
         resize.el.style.height = `${height}px`;
-        resize.el.style.minHeight = `${height}px`;
+        if (resize.el.dataset.smartShape !== 'line') resize.el.style.minHeight = `${height}px`;
+        resize.el.style.transform = `translate(${left}px, ${top}px)`;
         resize.el.dataset.shapeWidth = String(width);
         resize.el.dataset.shapeHeight = String(height);
+        resize.el.dataset.shapeLeft = String(left);
+        resize.el.dataset.shapeTop = String(top);
         return;
       }
       const info = shapeDragRef.current;
@@ -998,6 +1042,24 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Cho phép xóa Shape đã chọn bằng Delete/Backspace, không ảnh hưởng thao tác nhập văn bản.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const shape = selectedShapeRef.current;
+      if (!shape || !editorRef.current?.contains(shape)) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-smart-shape-text]')) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteSelectedWordShape();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Hiệu ứng kéo giãn cột bảng Word — đặt SAU handleInput để tham chiếu đúng thứ tự khai báo
   useEffect(() => {
     if (!isResizingWordTableCol) return;
@@ -1032,8 +1094,8 @@ export default function HomePage() {
     document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', stopResizing);
     document.addEventListener('touchcancel', stopResizing);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    if (editorRef.current) editorRef.current.style.cursor = 'col-resize';
+    if (editorRef.current) editorRef.current.style.userSelect = 'none';
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -1041,8 +1103,8 @@ export default function HomePage() {
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('touchend', stopResizing);
       document.removeEventListener('touchcancel', stopResizing);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      if (editorRef.current) editorRef.current.style.cursor = '';
+      if (editorRef.current) editorRef.current.style.userSelect = '';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isResizingWordTableCol]);
@@ -1108,8 +1170,8 @@ export default function HomePage() {
     document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', stopResizing);
     document.addEventListener('touchcancel', stopResizing);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    if (editorRef.current) editorRef.current.style.cursor = 'col-resize';
+    if (editorRef.current) editorRef.current.style.userSelect = 'none';
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -1117,8 +1179,8 @@ export default function HomePage() {
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('touchend', stopResizing);
       document.removeEventListener('touchcancel', stopResizing);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      if (editorRef.current) editorRef.current.style.cursor = '';
+      if (editorRef.current) editorRef.current.style.userSelect = '';
     };
   }, [isResizingSidebar]);
 
@@ -1302,6 +1364,28 @@ export default function HomePage() {
     document.execCommand('createLink', false, url.trim());
     handleInput();
   };
+
+  /** Xóa đúng Shape đang được chọn. Có thể gọi từ menu hoặc phím Delete/Backspace. */
+  /** Xóa đúng Shape đang được chọn. Có thể gọi từ menu hoặc phím Delete/Backspace.
+   * Dùng function declaration để có thể được gọi từ các effect khai báo phía trên
+   * mà không vi phạm temporal dead zone của const/let.
+   */
+  function deleteSelectedWordShape() {
+    const shape = selectedShapeRef.current;
+    if (!shape || !editorRef.current?.contains(shape)) return;
+    if (shape.nextElementSibling?.textContent === '\u00a0') {
+      shape.nextElementSibling.remove();
+    }
+    shape.remove();
+    selectedShapeRef.current = null;
+    shapeDragRef.current = null;
+    shapeResizeRef.current = null;
+    if (editorRef.current) {
+      editorRef.current.style.cursor = '';
+      editorRef.current.style.userSelect = '';
+    }
+    handleInput();
+  }
 
   /**
    * Insert → Shapes cho tài liệu Word. Các shape được lưu trực tiếp trong HTML của tài liệu,
@@ -1593,17 +1677,64 @@ export default function HomePage() {
     }, 800);
   };
 
-  // Lưu trạng thái hiện tại vào lịch sử để phục vụ Undo (Ctrl+Z), giới hạn 40 bước
+  // Lưu trạng thái hiện tại vào lịch sử để phục vụ Undo/Redo (tối đa 40 bước).
   const pushExcelHistory = (sheets: ExcelSheet[]) => {
     excelHistoryRef.current.push(sheets);
     if (excelHistoryRef.current.length > 40) excelHistoryRef.current.shift();
+    // Mỗi thay đổi mới tạo một nhánh chỉnh sửa mới, vì vậy Redo cũ không còn phù hợp.
+    excelRedoRef.current = [];
   };
 
   const handleExcelUndo = () => {
     const prevState = excelHistoryRef.current.pop();
     if (!prevState) return;
-    setExcelSheets(prevState);
-    scheduleExcelSave(prevState);
+    setExcelSheets((current) => {
+      excelRedoRef.current.push(current);
+      scheduleExcelSave(prevState);
+      return prevState;
+    });
+    setSelectedCell(null);
+    setExcelSelection(null);
+  };
+
+  const handleExcelRedo = () => {
+    const nextState = excelRedoRef.current.pop();
+    if (!nextState) return;
+    setExcelSheets((current) => {
+      excelHistoryRef.current.push(current);
+      if (excelHistoryRef.current.length > 40) excelHistoryRef.current.shift();
+      scheduleExcelSave(nextState);
+      return nextState;
+    });
+    setSelectedCell(null);
+    setExcelSelection(null);
+  };
+
+  const getExcelSelectionBounds = () => {
+    if (!selectedCell) return null;
+    const sel = excelSelection && excelSelection.sheetIdx === activeSheet ? excelSelection : null;
+    if (!sel) return { r1: selectedCell.r, r2: selectedCell.r, c1: selectedCell.c, c2: selectedCell.c };
+    return {
+      r1: Math.min(sel.r1, sel.r2),
+      r2: Math.max(sel.r1, sel.r2),
+      c1: Math.min(sel.c1, sel.c2),
+      c2: Math.max(sel.c1, sel.c2),
+    };
+  };
+
+  const isExcelCellSelected = (r: number, c: number) => {
+    const b = getExcelSelectionBounds();
+    return !!b && r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
+  };
+
+  const selectExcelCell = (cell: ExcelCell, extend = false) => {
+    if (extend && excelSelection && excelSelection.sheetIdx === activeSheet) {
+      setExcelSelection((prev) => prev ? { ...prev, r2: cell.r, c2: cell.c } : prev);
+    } else {
+      setExcelSelection({ sheetIdx: activeSheet, r1: cell.r, c1: cell.c, r2: cell.r, c2: cell.c });
+    }
+    setSelectedCell(cell);
+    setExcelFormulaValue(cell.text);
   };
 
   // Cập nhật nội dung 1 ô (từ việc gõ trực tiếp trong ô hoặc từ thanh công thức)
@@ -1627,10 +1758,11 @@ export default function HomePage() {
     setExcelFormulaValue(newText);
   };
 
-  // Áp style (đậm/nghiêng/gạch chân/căn lề/màu chữ/màu nền) cho ô đang chọn
+  // Áp style cho toàn bộ vùng đang chọn; nếu chỉ chọn một ô thì chỉ tác động ô đó.
   const applyStyleToSelectedCell = (patch: CellStyle) => {
     if (!selectedCell) return;
-    const { r, c } = selectedCell;
+    const bounds = getExcelSelectionBounds();
+    if (!bounds) return;
     setExcelSheets((prev) => {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
@@ -1639,14 +1771,15 @@ export default function HomePage() {
           ...sheet,
           rows: sheet.rows.map((rowCells) =>
             rowCells.map((cell) =>
-              cell.r === r && cell.c === c ? { ...cell, style: { ...cell.style, ...patch } } : cell
+              cell.r >= bounds.r1 && cell.r <= bounds.r2 && cell.c >= bounds.c1 && cell.c <= bounds.c2
+                ? { ...cell, style: { ...cell.style, ...patch } }
+                : cell
             )
           ),
         };
       });
       scheduleExcelSave(next);
-      const updatedCell = next[activeSheet]?.rows.find((row) => row.some((cell) => cell.r === r && cell.c === c));
-      const found = updatedCell?.find((cell) => cell.r === r && cell.c === c);
+      const found = next[activeSheet]?.rows.flat().find((cell) => cell.r === selectedCell.r && cell.c === selectedCell.c);
       if (found) setSelectedCell(found);
       return next;
     });
@@ -1660,130 +1793,109 @@ export default function HomePage() {
     else applyStyleToSelectedCell({ underline: !current.underline });
   };
 
-  // --- Gộp ô / Bỏ gộp ô Excel (mở rộng theo ô đang chọn — chưa hỗ trợ chọn vùng nhiều ô cùng lúc) ---
-  const mergeSelectedCellRight = () => {
+  // --- Gộp ô / Bỏ gộp ô Excel: hỗ trợ vùng chọn tự do bằng Shift + nhấp chuột. ---
+  const rebuildExcelSkip = (merges: Record<string, ExcelMerge>) => {
+    const skip = new Set<string>();
+    Object.values(merges).forEach((m) => {
+      for (let rr = m.r; rr < m.r + m.rowSpan; rr++) {
+        for (let cc = m.c; cc < m.c + m.colSpan; cc++) {
+          if (rr === m.r && cc === m.c) continue;
+          skip.add(`${rr}-${cc}`);
+        }
+      }
+    });
+    return skip;
+  };
+
+  const mergeExcelSelection = (expand: 'right' | 'down') => {
     if (!selectedCell) return;
-    const { r, c } = selectedCell;
+    const b = getExcelSelectionBounds();
+    if (!b) return;
+    const r1 = b.r1;
+    const c1 = b.c1;
+    let r2 = b.r2;
+    let c2 = b.c2;
+    // Giữ hành vi cũ khi chỉ chọn 1 ô: mỗi lần bấm mở rộng thêm đúng 1 hàng/cột.
+    if (r1 === r2 && c1 === c2) {
+      if (expand === 'right') c2 += 1;
+      else r2 += 1;
+    }
+
     setExcelSheets((prev) => {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
-        const existing = sheet.merges[`${r}-${c}`];
-        const currentColSpan = existing?.colSpan ?? 1;
-        const currentRowSpan = existing?.rowSpan ?? 1;
-        const newColSpan = currentColSpan + 1;
-        const targetCol = c + newColSpan - 1;
-        if (targetCol > sheet.endCol) return sheet;
-
-        const merges: Record<string, ExcelMerge> = { ...sheet.merges };
-        merges[`${r}-${c}`] = { r, c, rowSpan: currentRowSpan, colSpan: newColSpan };
-
-        const skip = new Set(sheet.skip);
-        for (let rr = r; rr < r + currentRowSpan; rr++) {
-          for (let cc = c; cc < c + newColSpan; cc++) {
-            if (rr === r && cc === c) continue;
-            skip.add(`${rr}-${cc}`);
-          }
+        if (r2 > sheet.endCol + sheet.rows.length || c2 > sheet.endCol) return sheet;
+        const maxRow = sheet.startRow + sheet.rows.length - 1;
+        if (r2 > maxRow || c2 > sheet.endCol) return sheet;
+        const merges = { ...sheet.merges };
+        const targetKey = `${r1}-${c1}`;
+        // Không cho gộp chồng lên merge khác.
+        for (const [key, m] of Object.entries(merges)) {
+          if (key === targetKey) continue;
+          const overlap = !(m.r + m.rowSpan - 1 < r1 || m.r > r2 || m.c + m.colSpan - 1 < c1 || m.c > c2);
+          if (overlap) return sheet;
         }
-
-        return { ...sheet, merges, skip };
+        // Nếu ô đầu đã là merge, mở rộng merge hiện tại trong đúng hướng.
+        const existing = merges[targetKey];
+        const mergedR2 = existing ? Math.max(r2, existing.r + existing.rowSpan - 1) : r2;
+        const mergedC2 = existing ? Math.max(c2, existing.c + existing.colSpan - 1) : c2;
+        merges[targetKey] = { r: r1, c: c1, rowSpan: mergedR2 - r1 + 1, colSpan: mergedC2 - c1 + 1 };
+        return { ...sheet, merges, skip: rebuildExcelSkip(merges) };
       });
       scheduleExcelSave(next);
       return next;
     });
   };
 
-  const mergeSelectedCellDown = () => {
-    if (!selectedCell) return;
-    const { r, c } = selectedCell;
-    setExcelSheets((prev) => {
-      pushExcelHistory(prev);
-      const next = prev.map((sheet, idx) => {
-        if (idx !== activeSheet) return sheet;
-        const existing = sheet.merges[`${r}-${c}`];
-        const currentColSpan = existing?.colSpan ?? 1;
-        const currentRowSpan = existing?.rowSpan ?? 1;
-        const newRowSpan = currentRowSpan + 1;
-        const maxRowIndex = sheet.startRow + sheet.rows.length - 1;
-        const targetRow = r + newRowSpan - 1;
-        if (targetRow > maxRowIndex) return sheet;
-
-        const merges: Record<string, ExcelMerge> = { ...sheet.merges };
-        merges[`${r}-${c}`] = { r, c, rowSpan: newRowSpan, colSpan: currentColSpan };
-
-        const skip = new Set(sheet.skip);
-        for (let rr = r; rr < r + newRowSpan; rr++) {
-          for (let cc = c; cc < c + currentColSpan; cc++) {
-            if (rr === r && cc === c) continue;
-            skip.add(`${rr}-${cc}`);
-          }
-        }
-
-        return { ...sheet, merges, skip };
-      });
-      scheduleExcelSave(next);
-      return next;
-    });
-  };
+  const mergeSelectedCellRight = () => mergeExcelSelection('right');
+  const mergeSelectedCellDown = () => mergeExcelSelection('down');
 
   const unmergeSelectedCell = () => {
     if (!selectedCell) return;
-    const { r, c } = selectedCell;
+    const b = getExcelSelectionBounds();
+    if (!b) return;
     setExcelSheets((prev) => {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
-        const existing = sheet.merges[`${r}-${c}`];
-        if (!existing) return sheet;
-
         const merges = { ...sheet.merges };
-        delete merges[`${r}-${c}`];
-
-        const skip = new Set(sheet.skip);
-        for (let rr = r; rr < r + existing.rowSpan; rr++) {
-          for (let cc = c; cc < c + existing.colSpan; cc++) {
-            if (rr === r && cc === c) continue;
-            skip.delete(`${rr}-${cc}`);
-          }
-        }
-
-        return { ...sheet, merges, skip };
+        const target = Object.entries(merges).find(([, m]) =>
+          selectedCell.r >= m.r && selectedCell.r < m.r + m.rowSpan && selectedCell.c >= m.c && selectedCell.c < m.c + m.colSpan
+        );
+        if (!target) return sheet;
+        delete merges[target[0]];
+        return { ...sheet, merges, skip: rebuildExcelSkip(merges) };
       });
       scheduleExcelSave(next);
       return next;
     });
   };
 
-  // Chèn / xoá dòng hoặc cột — dịch chuyển toạ độ r,c của các ô & vùng gộp còn lại
+  // Chèn / xoá dòng hoặc cột — hoạt động theo đúng dòng/cột người dùng đang chọn, đồng thời giữ merge.
   const handleInsertRow = (afterR: number) => {
     setExcelSheets((prev) => {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
         const colCount = sheet.rows[0]?.length ?? sheet.endCol - sheet.startCol + 1;
-        const newRow: ExcelCell[] = Array.from({ length: colCount }, (_, i) => ({
-          r: afterR + 1,
-          c: sheet.startCol + i,
-          text: '',
-        }));
-        const shiftedRows = sheet.rows.map((rowCells) =>
-          rowCells.map((cell) => (cell.r > afterR ? { ...cell, r: cell.r + 1 } : cell))
-        );
-        const insertAt = shiftedRows.findIndex((rowCells) => rowCells[0]?.r === afterR + 2);
-        const idxToInsert = insertAt === -1 ? shiftedRows.length : insertAt;
-        shiftedRows.splice(idxToInsert, 0, newRow);
-
+        const newRow: ExcelCell[] = Array.from({ length: colCount }, (_, i) => ({ r: afterR + 1, c: sheet.startCol + i, text: '' }));
+        const rows = sheet.rows.map((rowCells) => rowCells.map((cell) => cell.r > afterR ? { ...cell, r: cell.r + 1 } : cell));
+        const insertAt = rows.findIndex((rowCells) => rowCells[0]?.r === afterR + 2);
+        rows.splice(insertAt === -1 ? rows.length : insertAt, 0, newRow);
         const merges: Record<string, ExcelMerge> = {};
-        Object.entries(sheet.merges).forEach(([, m]) => {
-          const nm = m.r > afterR ? { ...m, r: m.r + 1 } : m;
+        Object.values(sheet.merges).forEach((m) => {
+          const crosses = m.r <= afterR && afterR < m.r + m.rowSpan;
+          const nm = crosses ? { ...m, rowSpan: m.rowSpan + 1 } : m.r > afterR ? { ...m, r: m.r + 1 } : { ...m };
           merges[`${nm.r}-${nm.c}`] = nm;
         });
-
-        return { ...sheet, rows: shiftedRows, merges };
+        return { ...sheet, rows, merges, skip: rebuildExcelSkip(merges) };
       });
       scheduleExcelSave(next);
       return next;
     });
+    setSelectedCell(null);
+    setExcelSelection(null);
   };
 
   const handleDeleteRow = (targetR: number) => {
@@ -1791,23 +1903,33 @@ export default function HomePage() {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
-        const filteredRows = sheet.rows
+        const rows = sheet.rows
           .filter((rowCells) => rowCells[0]?.r !== targetR)
-          .map((rowCells) => rowCells.map((cell) => (cell.r > targetR ? { ...cell, r: cell.r - 1 } : cell)));
-
+          .map((rowCells) => rowCells.map((cell) => cell.r > targetR ? { ...cell, r: cell.r - 1 } : cell));
         const merges: Record<string, ExcelMerge> = {};
-        Object.entries(sheet.merges).forEach(([, m]) => {
-          if (m.r === targetR) return;
-          const nm = m.r > targetR ? { ...m, r: m.r - 1 } : m;
-          merges[`${nm.r}-${nm.c}`] = nm;
+        Object.values(sheet.merges).forEach((m) => {
+          const start = m.r;
+          const end = m.r + m.rowSpan - 1;
+          if (targetR < start) {
+            const nm = { ...m, r: start - 1 };
+            merges[`${nm.r}-${nm.c}`] = nm;
+          } else if (targetR >= start && targetR <= end) {
+            if (m.rowSpan > 1) {
+              const nm = { ...m, r: start === targetR ? start : start, rowSpan: m.rowSpan - 1 };
+              if (start === targetR) nm.r = start;
+              merges[`${nm.r}-${nm.c}`] = nm;
+            }
+          } else {
+            merges[`${m.r}-${m.c}`] = { ...m };
+          }
         });
-
-        return { ...sheet, rows: filteredRows, merges };
+        return { ...sheet, rows, merges, skip: rebuildExcelSkip(merges) };
       });
       scheduleExcelSave(next);
       return next;
     });
     setSelectedCell(null);
+    setExcelSelection(null);
   };
 
   const handleInsertColumn = (afterC: number) => {
@@ -1816,24 +1938,24 @@ export default function HomePage() {
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
         const rows = sheet.rows.map((rowCells) => {
-          const shifted = rowCells.map((cell) => (cell.c > afterC ? { ...cell, c: cell.c + 1 } : cell));
+          const shifted = rowCells.map((cell) => cell.c > afterC ? { ...cell, c: cell.c + 1 } : cell);
           const insertAt = shifted.findIndex((cell) => cell.c === afterC + 2);
-          const newCell: ExcelCell = { r: rowCells[0]?.r ?? 0, c: afterC + 1, text: '' };
-          shifted.splice(insertAt === -1 ? shifted.length : insertAt, 0, newCell);
+          shifted.splice(insertAt === -1 ? shifted.length : insertAt, 0, { r: rowCells[0]?.r ?? 0, c: afterC + 1, text: '' });
           return shifted;
         });
-
         const merges: Record<string, ExcelMerge> = {};
-        Object.entries(sheet.merges).forEach(([, m]) => {
-          const nm = m.c > afterC ? { ...m, c: m.c + 1 } : m;
+        Object.values(sheet.merges).forEach((m) => {
+          const crosses = m.c <= afterC && afterC < m.c + m.colSpan;
+          const nm = crosses ? { ...m, colSpan: m.colSpan + 1 } : m.c > afterC ? { ...m, c: m.c + 1 } : { ...m };
           merges[`${nm.r}-${nm.c}`] = nm;
         });
-
-        return { ...sheet, rows, merges, endCol: sheet.endCol + 1 };
+        return { ...sheet, rows, merges, skip: rebuildExcelSkip(merges), endCol: sheet.endCol + 1 };
       });
       scheduleExcelSave(next);
       return next;
     });
+    setSelectedCell(null);
+    setExcelSelection(null);
   };
 
   const handleDeleteColumn = (targetC: number) => {
@@ -1841,26 +1963,70 @@ export default function HomePage() {
       pushExcelHistory(prev);
       const next = prev.map((sheet, idx) => {
         if (idx !== activeSheet) return sheet;
-        const rows = sheet.rows.map((rowCells) =>
-          rowCells
-            .filter((cell) => cell.c !== targetC)
-            .map((cell) => (cell.c > targetC ? { ...cell, c: cell.c - 1 } : cell))
-        );
-
+        const rows = sheet.rows.map((rowCells) => rowCells.filter((cell) => cell.c !== targetC).map((cell) => cell.c > targetC ? { ...cell, c: cell.c - 1 } : cell));
         const merges: Record<string, ExcelMerge> = {};
-        Object.entries(sheet.merges).forEach(([, m]) => {
-          if (m.c === targetC) return;
-          const nm = m.c > targetC ? { ...m, c: m.c - 1 } : m;
-          merges[`${nm.r}-${nm.c}`] = nm;
+        Object.values(sheet.merges).forEach((m) => {
+          const start = m.c;
+          const end = m.c + m.colSpan - 1;
+          if (targetC < start) {
+            const nm = { ...m, c: start - 1 };
+            merges[`${nm.r}-${nm.c}`] = nm;
+          } else if (targetC >= start && targetC <= end) {
+            if (m.colSpan > 1) {
+              const nm = { ...m, colSpan: m.colSpan - 1 };
+              merges[`${nm.r}-${nm.c}`] = nm;
+            }
+          } else {
+            merges[`${m.r}-${m.c}`] = { ...m };
+          }
         });
-
-        return { ...sheet, rows, merges, endCol: Math.max(sheet.startCol, sheet.endCol - 1) };
+        return { ...sheet, rows, merges, skip: rebuildExcelSkip(merges), endCol: Math.max(sheet.startCol, sheet.endCol - 1) };
       });
       scheduleExcelSave(next);
       return next;
     });
     setSelectedCell(null);
+    setExcelSelection(null);
   };
+
+  const handleExcelPaste = (e: React.ClipboardEvent<HTMLTableCellElement>, cell: ExcelCell) => {
+    const plain = e.clipboardData.getData('text/plain');
+    if (!plain || !plain.includes('\t') && !plain.includes('\n')) return;
+    e.preventDefault();
+    const matrix = plain.replace(/\r/g, '').split('\n').filter((row, idx, arr) => !(idx === arr.length - 1 && row === '')).map((row) => row.split('\t'));
+    if (!matrix.length) return;
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        const map = new Map(sheet.rows.flat().map((c) => [`${c.r}-${c.c}`, c]));
+        matrix.forEach((row, ri) => row.forEach((text, ci) => {
+          const key = `${cell.r + ri}-${cell.c + ci}`;
+          const old = map.get(key);
+          if (old) map.set(key, { ...old, text });
+        }));
+        return { ...sheet, rows: sheet.rows.map((rowCells) => rowCells.map((c) => map.get(`${c.r}-${c.c}`) || c)) };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
+  };
+
+  // Phím tắt Excel: Ctrl/Cmd+Z, Ctrl/Cmd+Y hoặc Ctrl/Cmd+Shift+Z.
+  useEffect(() => {
+    const onExcelKeyDown = (e: KeyboardEvent) => {
+      if (getFileType(selectedFile || ({} as DocumentNode)) !== 'excel') return;
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest('[data-excel-editor]')) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); handleExcelUndo(); }
+      else if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) { e.preventDefault(); handleExcelRedo(); }
+    };
+    document.addEventListener('keydown', onExcelKeyDown);
+    return () => document.removeEventListener('keydown', onExcelKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFile]);
 
   // Xuất bảng tính hiện tại (đã chỉnh sửa) thành file .xlsx để tải xuống.
   // Lưu ý: thư viện xlsx bản miễn phí chỉ ghi được nội dung + ô gộp,
@@ -1870,24 +2036,30 @@ export default function HomePage() {
     try {
       const XLSX = await import('xlsx');
       const newWorkbook = XLSX.utils.book_new();
-
       excelSheets.forEach((sheet) => {
-        const aoa: string[][] = sheet.rows.map((rowCells) => rowCells.map((cell) => cell.text));
+        const aoa = sheet.rows.map((rowCells) => rowCells.map((cell) => cell.text));
         const worksheet = XLSX.utils.aoa_to_sheet(aoa);
-
+        // Ghi lại công thức thực thay vì biến công thức thành chuỗi khi xuất.
+        sheet.rows.forEach((rowCells) => rowCells.forEach((cell) => {
+          if (typeof cell.text === 'string' && cell.text.startsWith('=')) {
+            const addr = XLSX.utils.encode_cell({ r: cell.r - sheet.startRow, c: cell.c - sheet.startCol });
+            if (worksheet[addr]) worksheet[addr] = { ...worksheet[addr], f: cell.text.slice(1) };
+          }
+        }));
         const merges = Object.values(sheet.merges).map((m) => ({
           s: { r: m.r - sheet.startRow, c: m.c - sheet.startCol },
           e: { r: m.r - sheet.startRow + m.rowSpan - 1, c: m.c - sheet.startCol + m.colSpan - 1 },
         }));
         if (merges.length > 0) worksheet['!merges'] = merges;
-
+        worksheet['!cols'] = Array.from({ length: sheet.endCol - sheet.startCol + 1 }, (_, i) => ({ wpx: getExcelColWidth(excelSheets.indexOf(sheet), sheet.startCol + i) }));
+        worksheet['!rows'] = sheet.rows.map((rowCells) => ({ hpx: getExcelRowHeight(excelSheets.indexOf(sheet), rowCells[0]?.r ?? 0) }));
         XLSX.utils.book_append_sheet(newWorkbook, worksheet, sheet.name);
       });
-
       const fileName = (selectedFile.title || 'bang-tinh').replace(/\.[^/.]+$/, '') + '.xlsx';
       XLSX.writeFile(newWorkbook, fileName);
     } catch (err) {
       console.error('Lỗi xuất file Excel:', err);
+      alert('Không thể xuất Excel. Vui lòng thử lại.');
     }
   };
 
@@ -2232,6 +2404,56 @@ export default function HomePage() {
     document.getElementById('word-highlight-picker')?.click();
   };
 
+  // Thước Word: hiển thị theo khổ A4 của trang soạn thảo, chỉ dùng cho Word.
+  // Các vạch được tạo từ kích thước cố định của trang A4, không can thiệp nội dung tài liệu.
+  const renderWordRuler = (direction: 'horizontal' | 'vertical') => {
+    const horizontal = direction === 'horizontal';
+    const totalCm = horizontal ? 21 : 29.7;
+    const ticks = Array.from({ length: Math.floor(totalCm * 2) + 1 }, (_, i) => i / 2);
+    return (
+      <div
+        className={horizontal
+          ? 'relative h-7 w-[210mm] shrink-0 bg-slate-50 border border-slate-200 print:hidden overflow-hidden select-none'
+          : 'relative w-7 h-[297mm] shrink-0 bg-slate-50 border border-slate-200 print:hidden overflow-hidden select-none'}
+        aria-label={horizontal ? 'Thước ngang Word' : 'Thước dọc Word'}
+      >
+        {ticks.map((cm) => {
+          const percent = (cm / totalCm) * 100;
+          const major = Number.isInteger(cm);
+          const half = !major;
+          return horizontal ? (
+            <div
+              key={`hr-${cm}`}
+              className="absolute top-0 h-full"
+              style={{ left: `${percent}%` }}
+            >
+              <div className={major ? 'h-3 border-l border-slate-500' : half ? 'h-2 border-l border-slate-300' : 'h-1.5 border-l border-slate-300'} />
+              {major && (
+                <span className="absolute top-3 -translate-x-1/2 text-[7px] leading-none text-slate-500 font-medium">
+                  {cm}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div
+              key={`vr-${cm}`}
+              className="absolute left-0 w-full"
+              style={{ top: `${percent}%` }}
+            >
+              <div className={major ? 'w-3 border-t border-slate-500' : half ? 'w-2 border-t border-slate-300' : 'w-1.5 border-t border-slate-300'} />
+              {major && (
+                <span className="absolute left-3 -translate-y-1/2 text-[7px] leading-none text-slate-500 font-medium">
+                  {cm}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+
   const renderContent = () => {
     if (!selectedFile) {
       return (
@@ -2425,6 +2647,14 @@ export default function HomePage() {
               Hoàn tác
             </button>
             <button
+              onClick={handleExcelRedo}
+              title="Làm lại (Ctrl+Y)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all duration-200 cursor-pointer shrink-0"
+            >
+              <Icon.Redo className="w-3.5 h-3.5" />
+              Làm lại
+            </button>
+            <button
               onClick={handleDownloadExcel}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 rounded-xl transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-95 cursor-pointer shrink-0"
             >
@@ -2542,7 +2772,7 @@ export default function HomePage() {
             </button>
             <button
               onClick={unmergeSelectedCell}
-              disabled={!selectedCell || !excelSheets[activeSheet]?.merges[`${selectedCell?.r}-${selectedCell?.c}`]}
+              disabled={!selectedCell || !Object.values(excelSheets[activeSheet]?.merges || {}).some((m) => selectedCell!.r >= m.r && selectedCell!.r < m.r + m.rowSpan && selectedCell!.c >= m.c && selectedCell!.c < m.c + m.colSpan)}
               title="Bỏ gộp ô đang chọn"
               className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
             >
@@ -2609,7 +2839,7 @@ export default function HomePage() {
           </div>
 
           {/* Vùng lưới bảng tính */}
-          <div className="flex-1 min-w-0 overflow-auto bg-white">
+          <div data-excel-editor className="flex-1 min-w-0 overflow-auto bg-white">
             {isExcelLoading ? (
               <div className="p-4 space-y-1.5 animate-riseIn">
                 {Array.from({ length: 10 }).map((_, i) => (
@@ -2690,7 +2920,8 @@ export default function HomePage() {
                                 const key = `${cell.r}-${cell.c}`;
                                 if (activeSheetData.skip.has(key)) return null;
                                 const merge = activeSheetData.merges[key];
-                                const isSelected = selectedCell?.r === cell.r && selectedCell?.c === cell.c;
+                                const isSelected = isExcelCellSelected(cell.r, cell.c);
+                                const isActiveCell = selectedCell?.r === cell.r && selectedCell?.c === cell.c;
                                 return (
                                   <td
                                     key={key}
@@ -2699,14 +2930,9 @@ export default function HomePage() {
                                     contentEditable
                                     suppressContentEditableWarning
                                     spellCheck={false}
-                                    onFocus={() => {
-                                      setSelectedCell(cell);
-                                      setExcelFormulaValue(cell.text);
-                                    }}
-                                    onClick={() => {
-                                      setSelectedCell(cell);
-                                      setExcelFormulaValue(cell.text);
-                                    }}
+                                    onFocus={() => selectExcelCell(cell, false)}
+                                    onClick={(e) => selectExcelCell(cell, e.shiftKey)}
+                                    onPaste={(e) => handleExcelPaste(e, cell)}
                                     onBlur={(e) => {
                                       const newText = (e.currentTarget.textContent || '').trim();
                                       if (newText !== cell.text) {
@@ -2729,14 +2955,14 @@ export default function HomePage() {
                                       textDecoration: cell.style?.underline ? 'underline' : 'none',
                                       textAlign: cell.style?.align || 'left',
                                       color: cell.style?.color || undefined,
-                                      backgroundColor: !isSelected ? cell.style?.bg || undefined : undefined,
+                                      backgroundColor: isSelected ? undefined : cell.style?.bg || undefined,
                                       fontSize: cell.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
                                       width: getExcelColWidth(activeSheet, cell.c),
                                       height: rowHeight,
                                     }}
                                     className={`border px-2 py-1 text-[12.5px] align-top whitespace-normal break-words overflow-hidden cursor-text outline-none focus:bg-amber-50/60 ${
                                       isSelected
-                                        ? 'border-teal-600 ring-2 ring-inset ring-teal-600 bg-teal-50/70'
+                                        ? (isActiveCell ? 'border-teal-600 ring-2 ring-inset ring-teal-600 bg-teal-50/70' : 'border-teal-300 bg-teal-50/40')
                                         : 'border-slate-200 hover:bg-slate-50'
                                     }`}
                                   >
@@ -2762,6 +2988,7 @@ export default function HomePage() {
                   onClick={() => {
                     setActiveSheet(idx);
                     setSelectedCell(null);
+                    setExcelSelection(null);
                   }}
                   className={`px-3.5 py-1.5 text-[11.5px] font-semibold rounded-t-md border-t border-l border-r transition-all duration-150 cursor-pointer shrink-0 -mb-px ${
                     activeSheet === idx
@@ -3141,6 +3368,17 @@ export default function HomePage() {
                             </label>
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          title="Xóa Shape đang chọn"
+                          aria-label="Xóa Shape đang chọn"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={deleteSelectedWordShape}
+                          className="mb-1 flex w-full items-center gap-2 rounded-lg border border-rose-100 bg-rose-50 px-2 py-2 text-left text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded border border-rose-200 bg-white">×</span>
+                          <span>Xóa Shape đang chọn</span>
+                        </button>
                         <div className="grid grid-cols-2 gap-1">
                           {[
                             ['rect','Hình chữ nhật'],['round','Chữ nhật bo góc'],['ellipse','Hình elip'],['diamond','Hình thoi'],
@@ -3257,7 +3495,11 @@ export default function HomePage() {
                 className="relative flex flex-col w-[210mm] max-w-full shrink-0 self-start mb-12"
                 style={{ zoom: `${wordZoom}%` } as React.CSSProperties}
               >
-                <div
+                <div className="flex flex-col w-[210mm] max-w-full shrink-0">
+                  {renderWordRuler('horizontal')}
+                  <div className="flex items-start">
+                    {renderWordRuler('vertical')}
+                    <div
                   ref={editorRef}
                   onMouseUp={refreshActiveFormats}
                   onKeyUp={refreshActiveFormats}
@@ -3277,7 +3519,9 @@ export default function HomePage() {
                     fontSize: '13pt',
                     lineHeight: '1.4',
                   }}
-                />
+                    />
+                  </div>
+                </div>
 
               </div>
             )}
