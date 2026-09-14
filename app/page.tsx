@@ -151,6 +151,18 @@ export default function HomePage() {
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedRangeRef = useRef<Range | null>(null);
+  // Bộ đếm ổn định cho Shape; không dùng Date.now()/Math.random() trong render/component code.
+  const shapeIdRef = useRef(0);
+
+  // Shapes trong trình soạn thảo Word: menu + kéo thả các khối đã chèn.
+  const [isShapesMenuOpen, setIsShapesMenuOpen] = useState<boolean>(false);
+  const shapeDragRef = useRef<{
+    el: HTMLElement;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
 
   // Trạng thái thanh công cụ định dạng (ribbon) kiểu Word
   const [activeFormats, setActiveFormats] = useState<Record<string, boolean>>({});
@@ -624,6 +636,31 @@ export default function HomePage() {
   /** Nhấn gần viền phải 1 ô trong bảng (td/th) để bắt đầu kéo giãn cột đó */
   const handleEditorMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
+
+    // Shape có khung ngoài contenteditable=false để có thể kéo bằng viền/khoảng trống,
+    // còn phần chữ bên trong vẫn contenteditable để người dùng sửa trực tiếp.
+    const shape = target.closest('[data-smart-shape]') as HTMLElement | null;
+    if (shape && editorRef.current?.contains(shape)) {
+      const textEditor = target.closest('[data-smart-shape-text]');
+      if (!textEditor) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = shape.getBoundingClientRect();
+        const currentLeft = parseFloat(shape.dataset.shapeLeft || '0') || 0;
+        const currentTop = parseFloat(shape.dataset.shapeTop || '0') || 0;
+        shapeDragRef.current = {
+          el: shape,
+          startX: e.clientX,
+          startY: e.clientY,
+          startLeft: currentLeft,
+          startTop: currentTop,
+        };
+        document.body.style.cursor = 'move';
+        document.body.style.userSelect = 'none';
+        return;
+      }
+    }
+
     const cell = target.closest('td, th') as HTMLTableCellElement | null;
     if (!cell) return;
     const table = cell.closest('table');
@@ -862,6 +899,52 @@ export default function HomePage() {
       // tránh thay đổi cấu trúc DOM ngay giữa lúc đang gõ (có thể làm nhảy con trỏ).
     }, 800);
   };
+
+  // Kéo thả Shapes bằng chuột: chỉ cập nhật vị trí của đúng shape đang chọn,
+  // sau đó dùng handleInput() để lưu HTML hiện tại theo luồng autosave sẵn có.
+  useEffect(() => {
+    const moveShape = (clientX: number, clientY: number) => {
+      const info = shapeDragRef.current;
+      if (!info || !editorRef.current) return;
+      const dx = clientX - info.startX;
+      const dy = clientY - info.startY;
+      const left = Math.round(info.startLeft + dx);
+      const top = Math.round(info.startTop + dy);
+      info.el.style.transform = `translate(${left}px, ${top}px)`;
+      info.el.dataset.shapeLeft = String(left);
+      info.el.dataset.shapeTop = String(top);
+    };
+
+    const stopShapeDrag = () => {
+      if (!shapeDragRef.current) return;
+      shapeDragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      handleInput();
+    };
+
+    const onMouseMove = (e: MouseEvent) => moveShape(e.clientX, e.clientY);
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length) {
+        e.preventDefault();
+        moveShape(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', stopShapeDrag);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', stopShapeDrag);
+    document.addEventListener('touchcancel', stopShapeDrag);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', stopShapeDrag);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', stopShapeDrag);
+      document.removeEventListener('touchcancel', stopShapeDrag);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Hiệu ứng kéo giãn cột bảng Word — đặt SAU handleInput để tham chiếu đúng thứ tự khai báo
   useEffect(() => {
@@ -1166,6 +1249,66 @@ export default function HomePage() {
     if (url === null || url.trim() === '') return;
     document.execCommand('createLink', false, url.trim());
     handleInput();
+  };
+
+  /**
+   * Insert → Shapes cho tài liệu Word. Các shape được lưu trực tiếp trong HTML của tài liệu,
+   * nên vẫn đi qua đúng luồng autosave hiện tại. Khung ngoài có thể kéo; chữ bên trong có thể sửa.
+   */
+  const insertWordShape = (kind: 'rect' | 'round' | 'ellipse' | 'diamond' | 'downArrow' | 'rightArrow' | 'line') => {
+    if (!editorRef.current) return;
+
+    editorRef.current.focus();
+    restoreSelection();
+
+    const styles: Record<string, string> = {
+      rect: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid #2563eb;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);',
+      round: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid #2563eb;border-radius:12px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);',
+      ellipse: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid #2563eb;border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;',
+      diamond: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:rotate(45deg);border:2px solid #2563eb;background:#fff;position:relative;box-sizing:border-box;cursor:move;',
+      downArrow: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:#2563eb;font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;',
+      rightArrow: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:#2563eb;font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;',
+      line: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
+    };
+    const labels: Record<string, string> = {
+      rect: 'Nội dung', round: 'Nội dung', ellipse: 'Nội dung', diamond: 'Nội dung',
+      downArrow: '↓', rightArrow: '→', line: ''
+    };
+
+    // React yêu cầu mã định danh phải ổn định; tạo ID bằng ref thay vì Date.now()/Math.random().
+    // Tránh trùng với các Shape đã có trong tài liệu khi người dùng mở/sửa lại file.
+    let id = '';
+    do {
+      const seq = shapeIdRef.current++;
+      id = `shape-${seq}`;
+    } while (editorRef.current.querySelector(`#${id}`));
+    let html = '';
+    if (kind === 'line') {
+      html = `<span data-smart-shape="line" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px solid #2563eb;"></span></span><span>&nbsp;</span>`;
+    } else if (kind === 'downArrow' || kind === 'rightArrow') {
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
+    } else {
+      const innerStyle = kind === 'diamond' ? 'display:block;transform:rotate(-45deg);width:100%;text-align:center;outline:none;' : 'display:block;width:100%;text-align:center;outline:none;';
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
+    }
+
+    document.execCommand('insertHTML', false, html);
+    handleInput();
+    setIsShapesMenuOpen(false);
+
+    // Đặt con trỏ vào phần chữ của shape vừa chèn để nhập nội dung ngay.
+    setTimeout(() => {
+      const shape = editorRef.current?.querySelector(`#${id}`) as HTMLElement | null;
+      const text = shape?.querySelector('[data-smart-shape-text]') as HTMLElement | null;
+      if (text) {
+        text.focus();
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    }, 0);
   };
 
   /** Chèn 1 bảng mới vào vị trí con trỏ trong tài liệu Word (hỏi số dòng/cột trước) */
@@ -1741,6 +1884,13 @@ export default function HomePage() {
         <rect x="4" y="5" width="16" height="14" rx="1.6" />
         <path d="M4 10h16M4 15h16M10 5v14M15 5v5" />
         <path d="m15 13.5 5 5m0-5-5 5" />
+      </svg>
+    ),
+    Shapes: (p: React.SVGProps<SVGSVGElement>) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}>
+        <rect x="4" y="4" width="8" height="8" rx="1.2" />
+        <circle cx="16.5" cy="15.5" r="4" />
+        <path d="m12.5 19.5 3-3 3 3" />
       </svg>
     ),
     Globe: (p: React.SVGProps<SVGSVGElement>) => (
@@ -2863,6 +3013,47 @@ export default function HomePage() {
                     <Icon.Table className="w-4 h-4" />
                     <span className="text-[11.5px] font-semibold">Chèn bảng</span>
                   </button>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      title="Chèn Shapes"
+                      aria-label="Chèn Shapes"
+                      aria-expanded={isShapesMenuOpen}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
+                      onClick={() => setIsShapesMenuOpen((v) => !v)}
+                      className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shrink-0 transition-colors duration-150 cursor-pointer"
+                    >
+                      <Icon.Shapes className="w-4 h-4" />
+                      <span className="text-[11.5px] font-semibold">Shapes</span>
+                    </button>
+                    {isShapesMenuOpen && (
+                      <div className="absolute left-0 top-[42px] z-[80] w-[235px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                        <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hình khối & đường nối</div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            ['rect','Hình chữ nhật'],['round','Chữ nhật bo góc'],['ellipse','Hình elip'],['diamond','Hình thoi'],
+                            ['downArrow','Mũi tên xuống'],['rightArrow','Mũi tên phải'],['line','Đường nối']
+                          ].map(([kind,label]) => (
+                            <button
+                              key={kind}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => insertWordShape(kind as 'rect'|'round'|'ellipse'|'diamond'|'downArrow'|'rightArrow'|'line')}
+                              className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+                            >
+                              <span className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-600">
+                                {kind === 'rect' ? '□' : kind === 'round' ? '▢' : kind === 'ellipse' ? '○' : kind === 'diamond' ? '◇' : kind === 'downArrow' ? '↓' : kind === 'rightArrow' ? '→' : '—'}
+                              </span>
+                              <span>{label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
                     title="Xóa ô bảng Word"
