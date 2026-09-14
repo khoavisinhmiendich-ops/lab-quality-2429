@@ -2404,56 +2404,6 @@ export default function HomePage() {
     document.getElementById('word-highlight-picker')?.click();
   };
 
-  // Thước Word: hiển thị theo khổ A4 của trang soạn thảo, chỉ dùng cho Word.
-  // Các vạch được tạo từ kích thước cố định của trang A4, không can thiệp nội dung tài liệu.
-  const renderWordRuler = (direction: 'horizontal' | 'vertical') => {
-    const horizontal = direction === 'horizontal';
-    const totalCm = horizontal ? 21 : 29.7;
-    const ticks = Array.from({ length: Math.floor(totalCm * 2) + 1 }, (_, i) => i / 2);
-    return (
-      <div
-        className={horizontal
-          ? 'relative h-7 w-[210mm] shrink-0 bg-slate-50 border border-slate-200 print:hidden overflow-hidden select-none'
-          : 'relative w-7 h-[297mm] shrink-0 bg-slate-50 border border-slate-200 print:hidden overflow-hidden select-none'}
-        aria-label={horizontal ? 'Thước ngang Word' : 'Thước dọc Word'}
-      >
-        {ticks.map((cm) => {
-          const percent = (cm / totalCm) * 100;
-          const major = Number.isInteger(cm);
-          const half = !major;
-          return horizontal ? (
-            <div
-              key={`hr-${cm}`}
-              className="absolute top-0 h-full"
-              style={{ left: `${percent}%` }}
-            >
-              <div className={major ? 'h-3 border-l border-slate-500' : half ? 'h-2 border-l border-slate-300' : 'h-1.5 border-l border-slate-300'} />
-              {major && (
-                <span className="absolute top-3 -translate-x-1/2 text-[7px] leading-none text-slate-500 font-medium">
-                  {cm}
-                </span>
-              )}
-            </div>
-          ) : (
-            <div
-              key={`vr-${cm}`}
-              className="absolute left-0 w-full"
-              style={{ top: `${percent}%` }}
-            >
-              <div className={major ? 'w-3 border-t border-slate-500' : half ? 'w-2 border-t border-slate-300' : 'w-1.5 border-t border-slate-300'} />
-              {major && (
-                <span className="absolute left-3 -translate-y-1/2 text-[7px] leading-none text-slate-500 font-medium">
-                  {cm}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-
   const renderContent = () => {
     if (!selectedFile) {
       return (
@@ -3496,9 +3446,6 @@ export default function HomePage() {
                 style={{ zoom: `${wordZoom}%` } as React.CSSProperties}
               >
                 <div className="flex flex-col w-[210mm] max-w-full shrink-0">
-                  {renderWordRuler('horizontal')}
-                  <div className="flex items-start">
-                    {renderWordRuler('vertical')}
                     <div
                   ref={editorRef}
                   onMouseUp={refreshActiveFormats}
@@ -3520,7 +3467,6 @@ export default function HomePage() {
                     lineHeight: '1.4',
                   }}
                     />
-                  </div>
                 </div>
 
               </div>
