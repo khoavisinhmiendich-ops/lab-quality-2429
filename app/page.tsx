@@ -176,6 +176,13 @@ export default function HomePage() {
     startTop: number;
     direction: string;
   } | null>(null);
+  const shapeRotateRef = useRef<{
+    el: HTMLElement;
+    centerX: number;
+    centerY: number;
+    startAngle: number;
+    startRotation: number;
+  } | null>(null);
 
   // Trạng thái thanh công cụ định dạng (ribbon) kiểu Word
   const [activeFormats, setActiveFormats] = useState<Record<string, boolean>>({});
@@ -651,16 +658,58 @@ export default function HomePage() {
     startWidth: number;
   } | null>(null);
 
+  /** Tạo tay nắm xoay cho Shape đang chọn; tay nắm chỉ phục vụ chỉnh sửa và không được lưu vào tài liệu. */
+  const ensureShapeRotateHandle = (shape: HTMLElement) => {
+    if (!editorRef.current?.contains(shape)) return;
+    editorRef.current.querySelectorAll('[data-smart-shape-rotate]').forEach((el) => {
+      if (el.parentElement !== shape) el.remove();
+    });
+    let handle = shape.querySelector(':scope > [data-smart-shape-rotate]') as HTMLElement | null;
+    if (!handle) {
+      handle = document.createElement('span');
+      handle.setAttribute('data-smart-shape-rotate', 'true');
+      handle.setAttribute('contenteditable', 'false');
+      handle.setAttribute('title', 'Kéo để xoay Shape');
+      handle.setAttribute('aria-label', 'Kéo để xoay Shape');
+      handle.style.cssText = 'position:absolute;left:50%;top:-24px;transform:translateX(-50%);width:16px;height:16px;border:2px solid #2563eb;border-radius:999px;background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.18);cursor:grab;z-index:20;box-sizing:border-box;';
+      shape.appendChild(handle);
+    }
+    return handle;
+  };
+
   /** Nhấn gần viền phải 1 ô trong bảng (td/th) để bắt đầu kéo giãn cột đó */
   const handleEditorMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
 
     // Shape có khung ngoài contenteditable=false để có thể kéo bằng viền/khoảng trống,
     // còn phần chữ bên trong vẫn contenteditable để người dùng sửa trực tiếp.
+    const rotateHandle = target.closest('[data-smart-shape-rotate]') as HTMLElement | null;
+    if (rotateHandle) {
+      const shape = rotateHandle.closest('[data-smart-shape]') as HTMLElement | null;
+      if (shape && editorRef.current?.contains(shape)) {
+        e.preventDefault();
+        e.stopPropagation();
+        selectedShapeRef.current = shape;
+        const rect = shape.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI;
+        const startRotation = parseFloat(shape.dataset.shapeRotation || (shape.dataset.smartShape === 'diamond' ? '45' : '0')) || 0;
+        shapeRotateRef.current = { el: shape, centerX, centerY, startAngle, startRotation };
+        rotateHandle.style.cursor = 'grabbing';
+        if (editorRef.current) {
+          editorRef.current.style.cursor = 'grabbing';
+          editorRef.current.style.userSelect = 'none';
+        }
+        return;
+      }
+    }
+
     const shape = target.closest('[data-smart-shape]') as HTMLElement | null;
     if (shape && editorRef.current?.contains(shape)) {
       // Chọn Shape ngay cả khi bấm vào vùng chữ, để có thể đổi màu viền sau đó.
       selectedShapeRef.current = shape;
+      ensureShapeRotateHandle(shape);
       const textEditor = target.closest('[data-smart-shape-text]');
       if (!textEditor) {
         e.preventDefault();
@@ -921,7 +970,7 @@ export default function HomePage() {
   const getCleanEditorSnapshot = (): { html: string; text: string } => {
     if (!editorRef.current) return { html: '', text: '' };
     const clone = editorRef.current.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}], [${WORD_PAGE_BADGE_ATTR}]`).forEach((el) => el.remove());
+    clone.querySelectorAll(`[${WORD_PAGE_GAP_ATTR}], [${WORD_PAGE_BADGE_ATTR}], [data-smart-shape-rotate]`).forEach((el) => el.remove());
     return { html: clone.innerHTML, text: clone.textContent || '' };
   };
 
@@ -959,7 +1008,19 @@ export default function HomePage() {
   // Kéo thả Shapes bằng chuột: chỉ cập nhật vị trí của đúng shape đang chọn,
   // sau đó dùng handleInput() để lưu HTML hiện tại theo luồng autosave sẵn có.
   useEffect(() => {
-    const moveShape = (clientX: number, clientY: number) => {
+    const moveShape = (clientX: number, clientY: number, shiftKey = false) => {
+      const rotate = shapeRotateRef.current;
+      if (rotate) {
+        const angle = Math.atan2(clientY - rotate.centerY, clientX - rotate.centerX) * 180 / Math.PI;
+        let rotation = rotate.startRotation + (angle - rotate.startAngle);
+        if (shiftKey) rotation = Math.round(rotation / 15) * 15;
+        rotation = Math.round(rotation * 10) / 10;
+        rotate.el.dataset.shapeRotation = String(rotation);
+        const left = parseFloat(rotate.el.dataset.shapeLeft || '0') || 0;
+        const top = parseFloat(rotate.el.dataset.shapeTop || '0') || 0;
+        rotate.el.style.transform = `translate(${left}px, ${top}px) rotate(${rotation}deg)`;
+        return;
+      }
       const resize = shapeResizeRef.current;
       if (resize) {
         const dx = clientX - resize.startX;
@@ -988,7 +1049,8 @@ export default function HomePage() {
         resize.el.style.width = `${width}px`;
         resize.el.style.height = `${height}px`;
         if (resize.el.dataset.smartShape !== 'line') resize.el.style.minHeight = `${height}px`;
-        resize.el.style.transform = `translate(${left}px, ${top}px)`;
+        const rotation = parseFloat(resize.el.dataset.shapeRotation || (resize.el.dataset.smartShape === 'diamond' ? '45' : '0')) || 0;
+        resize.el.style.transform = `translate(${left}px, ${top}px) rotate(${rotation}deg)`;
         resize.el.dataset.shapeWidth = String(width);
         resize.el.dataset.shapeHeight = String(height);
         resize.el.dataset.shapeLeft = String(left);
@@ -1001,17 +1063,22 @@ export default function HomePage() {
       const dy = clientY - info.startY;
       const left = Math.round(info.startLeft + dx);
       const top = Math.round(info.startTop + dy);
-      info.el.style.transform = `translate(${left}px, ${top}px)`;
+      const rotation = parseFloat(info.el.dataset.shapeRotation || (info.el.dataset.smartShape === 'diamond' ? '45' : '0')) || 0;
+      info.el.style.transform = `translate(${left}px, ${top}px) rotate(${rotation}deg)`;
       info.el.dataset.shapeLeft = String(left);
       info.el.dataset.shapeTop = String(top);
     };
 
     const stopShapeDrag = () => {
-      if (!shapeDragRef.current && !shapeResizeRef.current) return;
+      if (!shapeDragRef.current && !shapeResizeRef.current && !shapeRotateRef.current) return;
       const resizeEl = shapeResizeRef.current?.el;
+      const rotateEl = shapeRotateRef.current?.el;
       if (resizeEl) resizeEl.style.cursor = 'move';
+      const rotateHandle = rotateEl?.querySelector(':scope > [data-smart-shape-rotate]') as HTMLElement | null;
+      if (rotateHandle) rotateHandle.style.cursor = 'grab';
       shapeDragRef.current = null;
       shapeResizeRef.current = null;
+      shapeRotateRef.current = null;
       if (editorRef.current) {
         editorRef.current.style.cursor = '';
         editorRef.current.style.userSelect = '';
@@ -1019,7 +1086,7 @@ export default function HomePage() {
       handleInput();
     };
 
-    const onMouseMove = (e: MouseEvent) => moveShape(e.clientX, e.clientY);
+    const onMouseMove = (e: MouseEvent) => moveShape(e.clientX, e.clientY, e.shiftKey);
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length) {
         e.preventDefault();
@@ -1380,6 +1447,7 @@ export default function HomePage() {
     selectedShapeRef.current = null;
     shapeDragRef.current = null;
     shapeResizeRef.current = null;
+    shapeRotateRef.current = null;
     if (editorRef.current) {
       editorRef.current.style.cursor = '';
       editorRef.current.style.userSelect = '';
@@ -1391,7 +1459,7 @@ export default function HomePage() {
    * Insert → Shapes cho tài liệu Word. Các shape được lưu trực tiếp trong HTML của tài liệu,
    * nên vẫn đi qua đúng luồng autosave hiện tại. Khung ngoài có thể kéo; chữ bên trong có thể sửa.
    */
-  const insertWordShape = (kind: 'rect' | 'round' | 'ellipse' | 'diamond' | 'downArrow' | 'rightArrow' | 'line') => {
+  const insertWordShape = (kind: 'rect' | 'round' | 'ellipse' | 'diamond' | 'downArrow' | 'rightArrow' | 'line' | 'dashedLine') => {
     if (!editorRef.current) return;
 
     editorRef.current.focus();
@@ -1401,14 +1469,15 @@ export default function HomePage() {
       rect: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
       round: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};border-radius:12px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
       ellipse: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid ${shapeBorderColor};border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
-      diamond: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:rotate(45deg);border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
+      diamond: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:translate(0px,0px) rotate(45deg);border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
       downArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
       rightArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
       line: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
+      dashedLine: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
     };
     const labels: Record<string, string> = {
       rect: 'Nội dung', round: 'Nội dung', ellipse: 'Nội dung', diamond: 'Nội dung',
-      downArrow: '↓', rightArrow: '→', line: ''
+      downArrow: '↓', rightArrow: '→', line: '', dashedLine: ''
     };
 
     // React yêu cầu mã định danh phải ổn định; tạo ID bằng ref thay vì Date.now()/Math.random().
@@ -1419,13 +1488,15 @@ export default function HomePage() {
       id = `shape-${seq}`;
     } while (editorRef.current.querySelector(`#${id}`));
     let html = '';
-    if (kind === 'line') {
-      html = `<span data-smart-shape="line" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px solid ${shapeBorderColor};"></span></span><span>&nbsp;</span>`;
+    const initialRotation = kind === 'diamond' ? 45 : 0;
+    if (kind === 'line' || kind === 'dashedLine') {
+      const lineStyle = kind === 'dashedLine' ? 'dashed' : 'solid';
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px ${lineStyle} ${shapeBorderColor};"></span></span><span>&nbsp;</span>`;
     } else if (kind === 'downArrow' || kind === 'rightArrow') {
-      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
     } else {
       const innerStyle = kind === 'diamond' ? 'display:block;transform:rotate(-45deg);width:100%;text-align:center;outline:none;' : 'display:block;width:100%;text-align:center;outline:none;';
-      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
     }
 
     document.execCommand('insertHTML', false, html);
@@ -3276,7 +3347,7 @@ export default function HomePage() {
                                   const shape = selectedShapeRef.current;
                                   if (shape && editorRef.current?.contains(shape)) {
                                     shape.dataset.shapeBorderColor = color;
-                                    if (shape.dataset.smartShape === 'line' || shape.getAttribute('data-smart-shape') === 'line') {
+                                    if (shape.dataset.smartShape === 'line' || shape.dataset.smartShape === 'dashedLine' || shape.getAttribute('data-smart-shape') === 'line' || shape.getAttribute('data-smart-shape') === 'dashedLine') {
                                       const inner = shape.querySelector(':scope > span') as HTMLElement | null;
                                       if (inner) inner.style.borderTopColor = color;
                                     } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
@@ -3301,7 +3372,7 @@ export default function HomePage() {
                                   const shape = selectedShapeRef.current;
                                   if (shape && editorRef.current?.contains(shape)) {
                                     shape.dataset.shapeBorderColor = color;
-                                    if (shape.getAttribute('data-smart-shape') === 'line') {
+                                    if ((shape.getAttribute('data-smart-shape') === 'line' || shape.getAttribute('data-smart-shape') === 'dashedLine')) {
                                       const inner = shape.querySelector(':scope > span') as HTMLElement | null;
                                       if (inner) inner.style.borderTopColor = color;
                                     } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
@@ -3332,17 +3403,17 @@ export default function HomePage() {
                         <div className="grid grid-cols-2 gap-1">
                           {[
                             ['rect','Hình chữ nhật'],['round','Chữ nhật bo góc'],['ellipse','Hình elip'],['diamond','Hình thoi'],
-                            ['downArrow','Mũi tên xuống'],['rightArrow','Mũi tên phải'],['line','Đường nối']
+                            ['downArrow','Mũi tên xuống'],['rightArrow','Mũi tên phải'],['line','Đường nối'],['dashedLine','Đường nét đứt']
                           ].map(([kind,label]) => (
                             <button
                               key={kind}
                               type="button"
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => insertWordShape(kind as 'rect'|'round'|'ellipse'|'diamond'|'downArrow'|'rightArrow'|'line')}
+                              onClick={() => insertWordShape(kind as 'rect'|'round'|'ellipse'|'diamond'|'downArrow'|'rightArrow'|'line'|'dashedLine')}
                               className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] text-slate-700 hover:bg-slate-50"
                             >
                               <span className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-600">
-                                {kind === 'rect' ? '□' : kind === 'round' ? '▢' : kind === 'ellipse' ? '○' : kind === 'diamond' ? '◇' : kind === 'downArrow' ? '↓' : kind === 'rightArrow' ? '→' : '—'}
+                                {kind === 'rect' ? '□' : kind === 'round' ? '▢' : kind === 'ellipse' ? '○' : kind === 'diamond' ? '◇' : kind === 'downArrow' ? '↓' : kind === 'rightArrow' ? '→' : kind === 'dashedLine' ? '┅' : '—'}
                               </span>
                               <span>{label}</span>
                             </button>
