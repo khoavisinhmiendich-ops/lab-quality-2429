@@ -156,12 +156,22 @@ export default function HomePage() {
 
   // Shapes trong trình soạn thảo Word: menu + kéo thả các khối đã chèn.
   const [isShapesMenuOpen, setIsShapesMenuOpen] = useState<boolean>(false);
+  // Màu viền Shape: dùng cho Shape mới và có thể áp dụng ngay cho Shape đang chọn.
+  const [shapeBorderColor, setShapeBorderColor] = useState<string>('#2563eb');
+  const selectedShapeRef = useRef<HTMLElement | null>(null);
   const shapeDragRef = useRef<{
     el: HTMLElement;
     startX: number;
     startY: number;
     startLeft: number;
     startTop: number;
+  } | null>(null);
+  const shapeResizeRef = useRef<{
+    el: HTMLElement;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
   } | null>(null);
 
   // Trạng thái thanh công cụ định dạng (ribbon) kiểu Word
@@ -641,11 +651,31 @@ export default function HomePage() {
     // còn phần chữ bên trong vẫn contenteditable để người dùng sửa trực tiếp.
     const shape = target.closest('[data-smart-shape]') as HTMLElement | null;
     if (shape && editorRef.current?.contains(shape)) {
+      // Chọn Shape ngay cả khi bấm vào vùng chữ, để có thể đổi màu viền sau đó.
+      selectedShapeRef.current = shape;
       const textEditor = target.closest('[data-smart-shape-text]');
       if (!textEditor) {
         e.preventDefault();
         e.stopPropagation();
         const rect = shape.getBoundingClientRect();
+        // Góc dưới-phải: kéo để thay đổi kích thước tự do. Các vùng khác vẫn kéo để di chuyển.
+        const edge = 16;
+        const nearResizeCorner = e.clientX >= rect.right - edge && e.clientY >= rect.bottom - edge;
+        if (nearResizeCorner) {
+          shapeResizeRef.current = {
+            el: shape,
+            startX: e.clientX,
+            startY: e.clientY,
+            startWidth: rect.width,
+            startHeight: rect.height,
+          };
+          shape.style.cursor = 'nwse-resize';
+          if (editorRef.current) {
+            editorRef.current.style.cursor = 'nwse-resize';
+            editorRef.current.style.userSelect = 'none';
+          }
+          return;
+        }
         const currentLeft = parseFloat(shape.dataset.shapeLeft || '0') || 0;
         const currentTop = parseFloat(shape.dataset.shapeTop || '0') || 0;
         shapeDragRef.current = {
@@ -655,8 +685,10 @@ export default function HomePage() {
           startLeft: currentLeft,
           startTop: currentTop,
         };
-        document.body.style.cursor = 'move';
-        document.body.style.userSelect = 'none';
+        if (editorRef.current) {
+          editorRef.current.style.cursor = 'move';
+          editorRef.current.style.userSelect = 'none';
+        }
         return;
       }
     }
@@ -904,6 +936,21 @@ export default function HomePage() {
   // sau đó dùng handleInput() để lưu HTML hiện tại theo luồng autosave sẵn có.
   useEffect(() => {
     const moveShape = (clientX: number, clientY: number) => {
+      const resize = shapeResizeRef.current;
+      if (resize) {
+        const dx = clientX - resize.startX;
+        const dy = clientY - resize.startY;
+        const minWidth = resize.el.dataset.smartShape === 'diamond' ? 70 : 50;
+        const minHeight = resize.el.dataset.smartShape === 'diamond' ? 50 : 35;
+        const width = Math.max(minWidth, Math.round(resize.startWidth + dx));
+        const height = Math.max(minHeight, Math.round(resize.startHeight + dy));
+        resize.el.style.width = `${width}px`;
+        resize.el.style.height = `${height}px`;
+        resize.el.style.minHeight = `${height}px`;
+        resize.el.dataset.shapeWidth = String(width);
+        resize.el.dataset.shapeHeight = String(height);
+        return;
+      }
       const info = shapeDragRef.current;
       if (!info || !editorRef.current) return;
       const dx = clientX - info.startX;
@@ -916,10 +963,15 @@ export default function HomePage() {
     };
 
     const stopShapeDrag = () => {
-      if (!shapeDragRef.current) return;
+      if (!shapeDragRef.current && !shapeResizeRef.current) return;
+      const resizeEl = shapeResizeRef.current?.el;
+      if (resizeEl) resizeEl.style.cursor = 'move';
       shapeDragRef.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      shapeResizeRef.current = null;
+      if (editorRef.current) {
+        editorRef.current.style.cursor = '';
+        editorRef.current.style.userSelect = '';
+      }
       handleInput();
     };
 
@@ -1262,12 +1314,12 @@ export default function HomePage() {
     restoreSelection();
 
     const styles: Record<string, string> = {
-      rect: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid #2563eb;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);',
-      round: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid #2563eb;border-radius:12px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);',
-      ellipse: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid #2563eb;border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;',
-      diamond: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:rotate(45deg);border:2px solid #2563eb;background:#fff;position:relative;box-sizing:border-box;cursor:move;',
-      downArrow: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:#2563eb;font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;',
-      rightArrow: 'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:#2563eb;font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;',
+      rect: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
+      round: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};border-radius:12px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
+      ellipse: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid ${shapeBorderColor};border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
+      diamond: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:rotate(45deg);border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
+      downArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
+      rightArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
       line: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
     };
     const labels: Record<string, string> = {
@@ -1284,12 +1336,12 @@ export default function HomePage() {
     } while (editorRef.current.querySelector(`#${id}`));
     let html = '';
     if (kind === 'line') {
-      html = `<span data-smart-shape="line" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px solid #2563eb;"></span></span><span>&nbsp;</span>`;
+      html = `<span data-smart-shape="line" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px solid ${shapeBorderColor};"></span></span><span>&nbsp;</span>`;
     } else if (kind === 'downArrow' || kind === 'rightArrow') {
-      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
     } else {
       const innerStyle = kind === 'diamond' ? 'display:block;transform:rotate(-45deg);width:100%;text-align:center;outline:none;' : 'display:block;width:100%;text-align:center;outline:none;';
-      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
     }
 
     document.execCommand('insertHTML', false, html);
@@ -3032,6 +3084,63 @@ export default function HomePage() {
                     {isShapesMenuOpen && (
                       <div className="absolute left-0 top-[42px] z-[80] w-[235px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
                         <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hình khối & đường nối</div>
+                        <div className="px-2 pb-2">
+                          <div className="mb-1 text-[10px] font-semibold text-slate-500">Màu viền</div>
+                          <div className="flex flex-wrap gap-1" aria-label="Chọn màu viền Shape">
+                            {['#000000','#ffffff','#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#10b981','#06b6d4','#0ea5e9','#2563eb','#4f46e5','#7c3aed','#a855f7','#ec4899','#f43f5e','#64748b','#475569','#78350f'].map((color) => (
+                              <button
+                                key={color}
+                                type="button"
+                                title={`Màu viền ${color}`}
+                                aria-label={`Màu viền ${color}`}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  setShapeBorderColor(color);
+                                  const shape = selectedShapeRef.current;
+                                  if (shape && editorRef.current?.contains(shape)) {
+                                    shape.dataset.shapeBorderColor = color;
+                                    if (shape.dataset.smartShape === 'line' || shape.getAttribute('data-smart-shape') === 'line') {
+                                      const inner = shape.querySelector(':scope > span') as HTMLElement | null;
+                                      if (inner) inner.style.borderTopColor = color;
+                                    } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
+                                      shape.style.color = color;
+                                    } else {
+                                      shape.style.borderColor = color;
+                                    }
+                                    handleInput();
+                                  }
+                                }}
+                                className={`h-5 w-5 rounded-full border border-slate-300 shadow-sm hover:scale-110 transition-transform ${shapeBorderColor === color ? 'ring-2 ring-slate-500 ring-offset-1' : ''}`}
+                                style={{ backgroundColor: color }}
+                              />
+                            ))}
+                            <label title="Màu tùy chỉnh" className="relative h-5 w-5 overflow-hidden rounded-full border border-slate-300 cursor-pointer shadow-sm hover:scale-110 transition-transform">
+                              <input
+                                type="color"
+                                value={shapeBorderColor}
+                                onChange={(e) => {
+                                  const color = e.target.value;
+                                  setShapeBorderColor(color);
+                                  const shape = selectedShapeRef.current;
+                                  if (shape && editorRef.current?.contains(shape)) {
+                                    shape.dataset.shapeBorderColor = color;
+                                    if (shape.getAttribute('data-smart-shape') === 'line') {
+                                      const inner = shape.querySelector(':scope > span') as HTMLElement | null;
+                                      if (inner) inner.style.borderTopColor = color;
+                                    } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
+                                      shape.style.color = color;
+                                    } else {
+                                      shape.style.borderColor = color;
+                                    }
+                                    handleInput();
+                                  }
+                                }}
+                                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                              />
+                              <span className="pointer-events-none flex h-full w-full items-center justify-center text-[11px] text-slate-500">+</span>
+                            </label>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-1">
                           {[
                             ['rect','Hình chữ nhật'],['round','Chữ nhật bo góc'],['ellipse','Hình elip'],['diamond','Hình thoi'],
