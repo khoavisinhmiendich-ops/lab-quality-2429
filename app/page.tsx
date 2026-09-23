@@ -1200,8 +1200,17 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    document.addEventListener('selectionchange', refreshActiveFormats);
-    return () => document.removeEventListener('selectionchange', refreshActiveFormats);
+    const handleSelectionChange = () => {
+      // Luôn cập nhật vùng chọn mới nhất bên trong editor.
+      // Nhờ đó khi bấm các nút/combobox trên ribbon, lệnh định dạng
+      // luôn tác động đúng phần người dùng vừa bôi đen, không dùng
+      // lại một vùng chọn cũ của tài liệu.
+      saveSelection();
+      refreshActiveFormats();
+    };
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
   }, []);
 
   // Xử lý kéo thanh chia để thay đổi chiều rộng sidebar (chuột trên desktop, chạm trên di động/tablet)
@@ -1264,17 +1273,98 @@ export default function HomePage() {
 
   // Cỡ chữ theo pt thật (Word dùng pt, execCommand mặc định chỉ hỗ trợ thang 1-7 nên cần "vá" lại)
   const applyFontSize = (pt: string) => {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.focus();
     restoreSelection();
-    document.execCommand('fontSize', false, '7');
-    editorRef.current.querySelectorAll('font[size="7"]').forEach((el) => {
-      const span = document.createElement('span');
-      span.style.fontSize = `${pt}pt`;
-      span.innerHTML = (el as HTMLElement).innerHTML;
-      el.replaceWith(span);
-    });
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const sourceRange = selection.getRangeAt(0).cloneRange();
+    if (!editor.contains(sourceRange.commonAncestorContainer)) return;
+
+    // Chỉ áp dụng cỡ chữ cho đúng phần đang bôi đen.
+    // Không dùng querySelectorAll('font[size="7"]') trên toàn editor vì cách đó
+    // sẽ đổi cả những vùng khác trong tài liệu có cùng thẻ font.
+    if (!sourceRange.collapsed) {
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      const textNodes: Text[] = [];
+      let node = walker.nextNode();
+      while (node) {
+        const textNode = node as Text;
+        if (textNode.nodeValue && sourceRange.intersectsNode(textNode)) {
+          textNodes.push(textNode);
+        }
+        node = walker.nextNode();
+      }
+
+      const insertedSpans: HTMLSpanElement[] = [];
+
+      // Làm từ cuối về đầu để việc thay đổi DOM không làm lệch các node
+      // đã thu thập của vùng chọn.
+      for (let i = textNodes.length - 1; i >= 0; i--) {
+        const textNode = textNodes[i];
+        const length = textNode.nodeValue?.length ?? 0;
+        if (!length) continue;
+
+        let startOffset = 0;
+        let endOffset = length;
+
+        if (sourceRange.startContainer === textNode) {
+          startOffset = sourceRange.startOffset;
+        }
+        if (sourceRange.endContainer === textNode) {
+          endOffset = sourceRange.endOffset;
+        }
+
+        startOffset = Math.max(0, Math.min(startOffset, length));
+        endOffset = Math.max(0, Math.min(endOffset, length));
+        if (endOffset <= startOffset) continue;
+
+        const partRange = document.createRange();
+        partRange.setStart(textNode, startOffset);
+        partRange.setEnd(textNode, endOffset);
+
+        const span = document.createElement('span');
+        span.style.fontSize = `${pt}pt`;
+        span.appendChild(partRange.extractContents());
+        partRange.insertNode(span);
+        insertedSpans.unshift(span);
+      }
+
+      // Giữ lại đúng vùng vừa bôi đen để người dùng có thể tiếp tục
+      // định dạng độc lập mà không bị chuyển sang toàn bộ tài liệu.
+      if (insertedSpans.length > 0) {
+        const nextSelection = document.createRange();
+        nextSelection.setStartBefore(insertedSpans[0]);
+        nextSelection.setEndAfter(insertedSpans[insertedSpans.length - 1]);
+        selection.removeAllRanges();
+        selection.addRange(nextSelection);
+        savedRangeRef.current = nextSelection.cloneRange();
+      }
+    } else {
+      // Khi không bôi đen, cỡ chữ mới chỉ áp dụng cho vị trí con trỏ
+      // để nội dung nhập tiếp theo dùng đúng cỡ chữ đã chọn.
+      document.execCommand('fontSize', false, '7');
+      const active = window.getSelection();
+      if (active && active.rangeCount > 0) {
+        const range = active.getRangeAt(0);
+        const fonts = Array.from(editor.querySelectorAll('font[size="7"]'))
+          .filter((el) => range.intersectsNode(el));
+
+        fonts.forEach((el) => {
+          const span = document.createElement('span');
+          span.style.fontSize = `${pt}pt`;
+          while (el.firstChild) span.appendChild(el.firstChild);
+          el.replaceWith(span);
+        });
+      }
+    }
+
     handleInput();
+    refreshActiveFormats();
   };
 
   const applyHeading = (tag: string) => {
@@ -1459,29 +1549,91 @@ export default function HomePage() {
    * Insert → Shapes cho tài liệu Word. Các shape được lưu trực tiếp trong HTML của tài liệu,
    * nên vẫn đi qua đúng luồng autosave hiện tại. Khung ngoài có thể kéo; chữ bên trong có thể sửa.
    */
-  const insertWordShape = (kind: 'rect' | 'round' | 'ellipse' | 'diamond' | 'downArrow' | 'rightArrow' | 'line' | 'dashedLine') => {
+  type WordShapeKind =
+    | 'textBox' | 'rect' | 'round' | 'ellipse' | 'triangle' | 'diamond'
+    | 'parallelogram' | 'trapezoid' | 'pentagon' | 'hexagon' | 'octagon'
+    | 'rightChevron' | 'rightArrow' | 'leftArrow' | 'downArrow'
+    | 'upArrow' | 'star' | 'braceLeft' | 'braceRight' | 'arc' | 'curve'
+    | 'line' | 'arrowLine' | 'elbow' | 'elbowArrow' | 'curveArrow'
+    | 'uLine' | 'doubleBrace' | 'dashedLine';
+
+  const insertWordShape = (kind: WordShapeKind) => {
     if (!editorRef.current) return;
 
     editorRef.current.focus();
     restoreSelection();
 
+    const svgShapeKinds = new Set<WordShapeKind>([
+      'triangle','parallelogram','trapezoid','pentagon','hexagon','octagon','rightChevron',
+      'leftArrow','upArrow','star','braceLeft','braceRight','arc','curve','arrowLine','elbow',
+      'elbowArrow','curveArrow','uLine','doubleBrace'
+    ]);
+
     const styles: Record<string, string> = {
+      textBox: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:56px;margin:10px 12px 10px 0;padding:8px 12px;border:1px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
       rect: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
       round: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 14px;border:2px solid ${shapeBorderColor};border-radius:12px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
-      ellipse: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid ${shapeBorderColor};border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
+      ellipse: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:210px;min-height:64px;margin:10px 12px 10px 0;padding:10px 20px;border:2px solid ${shapeBorderColor};border-radius:999px;background:#fff;position:relative;box-sizing:border-box;cursor:move;transform:translate(0px,0px);`,
       diamond: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:100px;margin:10px 24px;padding:12px;transform:translate(0px,0px) rotate(45deg);border:2px solid ${shapeBorderColor};background:#fff;position:relative;box-sizing:border-box;cursor:move;`,
       downArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
       rightArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:${shapeBorderColor};font-size:54px;line-height:1;position:relative;box-sizing:border-box;cursor:move;`,
+      leftArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:64px;margin:8px 14px;color:${shapeBorderColor};position:relative;box-sizing:border-box;cursor:move;`,
+      upArrow: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:72px;height:76px;margin:8px 14px;color:${shapeBorderColor};position:relative;box-sizing:border-box;cursor:move;`,
+      triangle: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:120px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      parallelogram: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:170px;height:76px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      trapezoid: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:170px;height:76px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      pentagon: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      hexagon: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:160px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      octagon: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      rightChevron: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:80px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      star: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:100px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      braceLeft: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:60px;height:100px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      braceRight: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:60px;height:100px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      doubleBrace: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:110px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      arc: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:150px;height:90px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      curve: `display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:170px;height:80px;margin:10px 18px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
       line: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
       dashedLine: 'display:inline-block;vertical-align:middle;width:180px;height:28px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;',
+      arrowLine: `display:inline-block;vertical-align:middle;width:180px;height:42px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      elbow: `display:inline-block;vertical-align:middle;width:180px;height:70px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      elbowArrow: `display:inline-block;vertical-align:middle;width:180px;height:70px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      curveArrow: `display:inline-block;vertical-align:middle;width:180px;height:70px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
+      uLine: `display:inline-block;vertical-align:middle;width:150px;height:70px;margin:8px 14px;position:relative;box-sizing:border-box;cursor:move;color:${shapeBorderColor};`,
     };
     const labels: Record<string, string> = {
-      rect: 'Nội dung', round: 'Nội dung', ellipse: 'Nội dung', diamond: 'Nội dung',
-      downArrow: '↓', rightArrow: '→', line: '', dashedLine: ''
+      textBox: 'Nội dung', rect: 'Nội dung', round: 'Nội dung', ellipse: 'Nội dung', diamond: 'Nội dung',
+      downArrow: '↓', rightArrow: '→', leftArrow: '←', upArrow: '↑', triangle: 'Nội dung',
+      parallelogram: 'Nội dung', trapezoid: 'Nội dung', pentagon: 'Nội dung', hexagon: 'Nội dung',
+      octagon: 'Nội dung', rightChevron: 'Nội dung', star: 'Nội dung', line: '', dashedLine: '',
+      arrowLine: '', elbow: '', elbowArrow: '', curveArrow: '', uLine: '', doubleBrace: '',
+      braceLeft: '', braceRight: '', arc: '', curve: ''
     };
 
-    // React yêu cầu mã định danh phải ổn định; tạo ID bằng ref thay vì Date.now()/Math.random().
-    // Tránh trùng với các Shape đã có trong tài liệu khi người dùng mở/sửa lại file.
+    const svg = (kind: WordShapeKind) => {
+      const common = `xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 200 100" preserveAspectRatio="none" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"`;
+      const body: Record<string,string> = {
+        triangle: '<polygon points="100,8 190,92 10,92"/>',
+        parallelogram: '<polygon points="38,8 190,8 162,92 10,92"/>',
+        trapezoid: '<polygon points="38,8 162,8 190,92 10,92"/>',
+        pentagon: '<polygon points="100,6 190,38 155,94 45,94 10,38"/>',
+        hexagon: '<polygon points="35,8 165,8 195,50 165,92 35,92 5,50"/>',
+        octagon: '<polygon points="40,7 160,7 193,40 193,60 160,93 40,93 7,60 7,40"/>',
+        rightChevron: '<polyline points="10,10 82,10 142,50 82,90 10,90 70,50 10,10"/>',
+        star: '<polygon points="100,5 122,35 157,36 130,57 140,91 100,70 60,91 70,57 43,36 78,35"/>',
+        braceLeft: '<path d="M145 5 C105 5 115 25 82 25 C52 25 55 42 55 50 C55 58 52 75 82 75 C115 75 105 95 145 95"/>',
+        braceRight: '<path d="M55 5 C95 5 85 25 118 25 C148 25 145 42 145 50 C145 58 148 75 118 75 C85 75 95 95 55 95"/>',
+        doubleBrace: '<path d="M65 8 C35 8 45 24 25 24 C8 24 12 38 12 50 C12 62 8 76 25 76 C45 76 35 92 65 92 M135 8 C165 8 155 24 175 24 C192 24 188 38 188 50 C188 62 192 76 175 76 C155 76 165 92 135 92"/>',
+        arc: '<path d="M20 82 A80 80 0 0 1 180 82"/>',
+        curve: '<path d="M10 75 C55 5 95 95 140 25 C155 3 172 15 190 30"/>',
+        arrowLine: '<line x1="12" y1="50" x2="168" y2="50"/><polygon points="188,50 168,40 168,60" fill="currentColor" stroke="none"/>',
+        elbow: '<polyline points="12,82 82,82 82,18 188,18"/>',
+        elbowArrow: '<polyline points="12,82 82,82 82,18 168,18"/><polygon points="188,18 168,8 168,28" fill="currentColor" stroke="none"/>',
+        curveArrow: '<path d="M10 78 C55 8 115 92 168 25"/><polygon points="188,25 168,15 168,35" fill="currentColor" stroke="none"/>',
+        uLine: '<path d="M20 15 V68 Q20 85 38 85 H162 Q180 85 180 68 V15"/>',
+      };
+      return `<svg ${common}>${body[kind] || ''}</svg>`;
+    };
+
     let id = '';
     do {
       const seq = shapeIdRef.current++;
@@ -1489,16 +1641,18 @@ export default function HomePage() {
     } while (editorRef.current.querySelector(`#${id}`));
     let html = '';
     const initialRotation = kind === 'diamond' ? 45 : 0;
+    const textKinds = new Set<WordShapeKind>(['textBox','rect','round','ellipse','diamond','triangle','parallelogram','trapezoid','pentagon','hexagon','octagon','rightChevron']);
     if (kind === 'line' || kind === 'dashedLine') {
       const lineStyle = kind === 'dashedLine' ? 'dashed' : 'solid';
       html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span style="display:block;width:100%;border-top:2px ${lineStyle} ${shapeBorderColor};"></span></span><span>&nbsp;</span>`;
-    } else if (kind === 'downArrow' || kind === 'rightArrow') {
+    } else if (svgShapeKinds.has(kind)) {
+      html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}">${svg(kind)}</span><span>&nbsp;</span>`;
+    } else if (kind === 'downArrow' || kind === 'rightArrow' || kind === 'leftArrow' || kind === 'upArrow') {
       html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="display:inline-block;min-width:1em;outline:none;">${labels[kind]}</span></span><span>&nbsp;</span>`;
-    } else {
+    } else if (textKinds.has(kind)) {
       const innerStyle = kind === 'diamond' ? 'display:block;transform:rotate(-45deg);width:100%;text-align:center;outline:none;' : 'display:block;width:100%;text-align:center;outline:none;';
       html = `<span data-smart-shape="${kind}" data-shape-left="0" data-shape-top="0" data-shape-rotation="${initialRotation}" data-shape-border-color="${shapeBorderColor}" contenteditable="false" id="${id}" style="${styles[kind]}"><span data-smart-shape-text="true" contenteditable="true" style="${innerStyle}">${labels[kind]}</span></span><span>&nbsp;</span>`;
     }
-
     document.execCommand('insertHTML', false, html);
     handleInput();
     setIsShapesMenuOpen(false);
@@ -3352,6 +3506,9 @@ export default function HomePage() {
                                       if (inner) inner.style.borderTopColor = color;
                                     } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
                                       shape.style.color = color;
+                                    } else if (shape.querySelector('svg')) {
+                                      shape.style.color = color;
+                                      shape.style.borderColor = color;
                                     } else {
                                       shape.style.borderColor = color;
                                     }
@@ -3377,6 +3534,9 @@ export default function HomePage() {
                                       if (inner) inner.style.borderTopColor = color;
                                     } else if (shape.getAttribute('data-smart-shape') === 'downArrow' || shape.getAttribute('data-smart-shape') === 'rightArrow') {
                                       shape.style.color = color;
+                                    } else if (shape.querySelector('svg')) {
+                                      shape.style.color = color;
+                                      shape.style.borderColor = color;
                                     } else {
                                       shape.style.borderColor = color;
                                     }
@@ -3400,22 +3560,29 @@ export default function HomePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded border border-rose-200 bg-white">×</span>
                           <span>Xóa Shape đang chọn</span>
                         </button>
+                        <div className="mb-1 text-[10px] font-semibold text-slate-500">Hình khối</div>
                         <div className="grid grid-cols-2 gap-1">
                           {[
-                            ['rect','Hình chữ nhật'],['round','Chữ nhật bo góc'],['ellipse','Hình elip'],['diamond','Hình thoi'],
-                            ['downArrow','Mũi tên xuống'],['rightArrow','Mũi tên phải'],['line','Đường nối'],['dashedLine','Đường nét đứt']
-                          ].map(([kind,label]) => (
-                            <button
-                              key={kind}
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => insertWordShape(kind as 'rect'|'round'|'ellipse'|'diamond'|'downArrow'|'rightArrow'|'line'|'dashedLine')}
-                              className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] text-slate-700 hover:bg-slate-50"
-                            >
-                              <span className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-600">
-                                {kind === 'rect' ? '□' : kind === 'round' ? '▢' : kind === 'ellipse' ? '○' : kind === 'diamond' ? '◇' : kind === 'downArrow' ? '↓' : kind === 'rightArrow' ? '→' : kind === 'dashedLine' ? '┅' : '—'}
-                              </span>
-                              <span>{label}</span>
+                            ['textBox','Hộp văn bản','▤'],['rect','Hình chữ nhật','□'],['round','Chữ nhật bo góc','▢'],['ellipse','Hình elip','○'],
+                            ['triangle','Tam giác','△'],['diamond','Hình thoi','◇'],['parallelogram','Hình bình hành','▱'],['trapezoid','Hình thang','⏢'],
+                            ['pentagon','Ngũ giác','⬠'],['hexagon','Lục giác','⬡'],['octagon','Bát giác','🛑'],['rightChevron','Mũi tên góc','›'],
+                            ['rightArrow','Mũi tên phải','→'],['leftArrow','Mũi tên trái','←'],['downArrow','Mũi tên xuống','↓'],['upArrow','Mũi tên lên','↑'],
+                            ['star','Ngôi sao','☆'],['braceLeft','Ngoặc trái','{'],['braceRight','Ngoặc phải','}'],['doubleBrace','Ngoặc đôi','}{']
+                          ].map(([kind,label,icon]) => (
+                            <button key={kind} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertWordShape(kind as WordShapeKind)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] text-slate-700 hover:bg-slate-50">
+                              <span className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-600 text-[15px]">{icon}</span><span>{label}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-2 mb-1 text-[10px] font-semibold text-slate-500">Đường nối</div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            ['line','Đường thẳng','—'],['arrowLine','Đường có mũi tên','→'],['elbow','Đường gấp khúc','⌜'],['elbowArrow','Gấp khúc có mũi tên','↗'],
+                            ['curve','Đường cong','⌒'],['curveArrow','Cong có mũi tên','↗'],['uLine','Đường chữ U','∪'],['arc','Cung','⌒'],
+                            ['dashedLine','Đường nét đứt','┅']
+                          ].map(([kind,label,icon]) => (
+                            <button key={kind} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertWordShape(kind as WordShapeKind)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] text-slate-700 hover:bg-slate-50">
+                              <span className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-600 text-[15px]">{icon}</span><span>{label}</span>
                             </button>
                           ))}
                         </div>
