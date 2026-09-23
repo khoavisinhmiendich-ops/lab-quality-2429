@@ -420,24 +420,33 @@ export default function HomePage() {
       }
 
       try {
-        const cloudRes = await fetch(`/api/document-data?key=${encodeURIComponent(docKey)}`);
-        const cloudData = await cloudRes.json();
-
-        if (cloudData && cloudData.content) {
+        // Luôn kiểm tra bản lưu cục bộ trước bản Cloud.
+        // Shapes, vị trí, kích thước, xoay, màu viền và các chỉnh sửa DOM đều được
+        // ghi vào localStorage ngay trong handleInput(). Vì Cloud được đồng bộ theo
+        // debounce 800ms, khi người dùng đóng app ngay sau khi chỉnh sửa, bản Cloud
+        // có thể vẫn còn phiên bản cũ. Ưu tiên bản cục bộ giúp mở lại app không mất
+        // Shapes/chỉnh sửa vừa thực hiện.
+        const savedLocal = localStorage.getItem(docKey);
+        if (savedLocal) {
           if (isSubscribed) {
-            setHtmlContent(cloudData.content);
-            setWordCount(computeWordCount(cloudData.content));
+            setHtmlContent(savedLocal);
+            setWordCount(computeWordCount(savedLocal));
             setIsSaved(true);
             setIsLoading(false);
           }
           return;
         }
 
-        const savedLocal = localStorage.getItem(docKey);
-        if (savedLocal) {
+        const cloudRes = await fetch(`/api/document-data?key=${encodeURIComponent(docKey)}`);
+        const cloudData = await cloudRes.json();
+
+        if (cloudData && cloudData.content) {
           if (isSubscribed) {
-            setHtmlContent(savedLocal);
-            setWordCount(computeWordCount(savedLocal));
+            // Đồng bộ lại bản Cloud xuống local để những lần mở sau vẫn có dữ liệu
+            // ngay cả khi mạng/API tạm thời không khả dụng.
+            localStorage.setItem(docKey, cloudData.content);
+            setHtmlContent(cloudData.content);
+            setWordCount(computeWordCount(cloudData.content));
             setIsSaved(true);
             setIsLoading(false);
           }
