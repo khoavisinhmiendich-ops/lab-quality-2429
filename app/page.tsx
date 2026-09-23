@@ -124,6 +124,11 @@ export default function HomePage() {
   const WORD_ZOOM_MAX = 150;
   const WORD_ZOOM_STEP = 10;
   const [wordZoom, setWordZoom] = useState<number>(100);
+  // --- Thiết lập trang Word: kích thước + hướng trang (độc lập với Excel và từng tài liệu)
+  type WordPageSize = 'A4' | 'A3' | 'Letter' | 'Legal';
+  type WordOrientation = 'portrait' | 'landscape';
+  const [wordPageSize, setWordPageSize] = useState<WordPageSize>('A4');
+  const [wordOrientation, setWordOrientation] = useState<WordOrientation>('portrait');
   // --- Tự động tách trang thật cho Word (chèn khoảng trống thật vào DOM, không phải overlay) ---
   // A4 CSS ở 96dpi: 210 x 297mm ≈ 793.7 x 1122.5px. Dùng giá trị gần đúng để
   // đồng bộ với min-h-[297mm] của vùng soạn thảo và tránh lỗi lệch trang theo từng lần render.
@@ -370,11 +375,36 @@ export default function HomePage() {
 
     let isSubscribed = true;
     const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    const pageSettingsKey = `${docKey}_page_settings`;
 
     const loadDocument = async () => {
       if (isSubscribed) {
         setIsLoading(true);
         setWordZoom(100);
+
+        // Đọc thiết lập trang trong callback async thay vì gọi setState
+        // trực tiếp trong thân effect, tránh cascading renders theo React lint.
+        let savedSize: WordPageSize = 'A4';
+        let savedOrientation: WordOrientation = 'portrait';
+        const savedPageSettings = localStorage.getItem(pageSettingsKey);
+        if (savedPageSettings) {
+          try {
+            const parsed: unknown = JSON.parse(savedPageSettings);
+            if (typeof parsed === 'object' && parsed !== null) {
+              const settings = parsed as { size?: WordPageSize; orientation?: WordOrientation };
+              if (settings.size && settings.size in WORD_PAGE_DIMENSIONS) {
+                savedSize = settings.size;
+              }
+              if (settings.orientation === 'portrait' || settings.orientation === 'landscape') {
+                savedOrientation = settings.orientation;
+              }
+            }
+          } catch {
+            // Nếu thiết lập cũ không hợp lệ, dùng A4/Dọc mặc định.
+          }
+        }
+        setWordPageSize(savedSize);
+        setWordOrientation(savedOrientation);
       }
 
       // Tải file gốc 1 lần duy nhất, tái sử dụng luôn cho mammoth nếu chưa có
@@ -1265,6 +1295,145 @@ export default function HomePage() {
     };
   }, [isResizingSidebar]);
 
+
+  // --- Các chức năng Page của Word: chỉ tác động lên tài liệu Word đang mở ---
+  const WORD_PAGE_DIMENSIONS: Record<WordPageSize, { width: number; height: number }> = {
+    A4: { width: 210, height: 297 },
+    A3: { width: 297, height: 420 },
+    Letter: { width: 216, height: 279 },
+    Legal: { width: 216, height: 356 },
+  };
+
+  const getWordPageDimensions = () => {
+    const base = WORD_PAGE_DIMENSIONS[wordPageSize];
+    return wordOrientation === 'landscape'
+      ? { width: base.height, height: base.width }
+      : base;
+  };
+
+  const applyWordPageBreak = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    restoreSelection();
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    const pageBreak = document.createElement('div');
+    pageBreak.setAttribute('data-word-page-break', 'true');
+    pageBreak.setAttribute('contenteditable', 'false');
+    pageBreak.style.breakBefore = 'page';
+    pageBreak.style.pageBreakBefore = 'always';
+    pageBreak.style.height = '1px';
+    pageBreak.style.margin = '0';
+    pageBreak.style.padding = '0';
+    pageBreak.style.border = '0';
+
+    range.deleteContents();
+    range.insertNode(pageBreak);
+    const after = document.createRange();
+    after.setStartAfter(pageBreak);
+    after.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(after);
+    handleInput();
+  };
+
+  const applyWordLineSpacing = (value: '1' | '1.15' | '1.5' | '2' | '2.5' | '3') => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    restoreSelection();
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    const blocks: HTMLElement[] = [];
+    const addBlock = (node: Node | null) => {
+      let el: HTMLElement | null = node instanceof HTMLElement ? node : node?.parentElement ?? null;
+      while (el && el !== editor) {
+        const tag = el.tagName.toLowerCase();
+        if (['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote'].includes(tag)) {
+          if (!blocks.includes(el)) blocks.push(el);
+          return;
+        }
+        el = el.parentElement;
+      }
+    };
+
+    if (range.collapsed) {
+      addBlock(range.startContainer);
+    } else {
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT);
+      let node = walker.nextNode();
+      while (node) {
+        const el = node as HTMLElement;
+        if (range.intersectsNode(el)) addBlock(el);
+        node = walker.nextNode();
+      }
+      addBlock(range.startContainer);
+      addBlock(range.endContainer);
+    }
+
+    blocks.forEach((block) => {
+      block.style.lineHeight = value;
+    });
+    handleInput();
+  };
+
+  const applyWordParagraphSpacing = (kind: 'before' | 'after', remove = false) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    restoreSelection();
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    const blocks: HTMLElement[] = [];
+    const addBlock = (node: Node | null) => {
+      let el: HTMLElement | null = node instanceof HTMLElement ? node : node?.parentElement ?? null;
+      while (el && el !== editor) {
+        const tag = el.tagName.toLowerCase();
+        if (['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote'].includes(tag)) {
+          if (!blocks.includes(el)) blocks.push(el);
+          return;
+        }
+        el = el.parentElement;
+      }
+    };
+
+    addBlock(range.startContainer);
+    addBlock(range.endContainer);
+    if (!range.collapsed) {
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT);
+      let node = walker.nextNode();
+      while (node) {
+        const el = node as HTMLElement;
+        if (range.intersectsNode(el)) addBlock(el);
+        node = walker.nextNode();
+      }
+    }
+
+    blocks.forEach((block) => {
+      if (kind === 'before') block.style.marginTop = remove ? '' : '12pt';
+      else block.style.marginBottom = remove ? '' : '12pt';
+    });
+    handleInput();
+  };
+
+  const setWordPageSetting = (size: WordPageSize, orientation: WordOrientation) => {
+    setWordPageSize(size);
+    setWordOrientation(orientation);
+    if (selectedFile) {
+      const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+      localStorage.setItem(`${docKey}_page_settings`, JSON.stringify({ size, orientation }));
+    }
+  };
 
   // Chạy 1 lệnh định dạng chuẩn của trình duyệt (execCommand) trên vùng đang chọn
   const execFormat = (command: string, value?: string) => {
@@ -3480,6 +3649,49 @@ export default function HomePage() {
           {/* THANH CÔNG CỤ ĐỊNH DẠNG (RIBBON) — kiểu Word */}
           {!isLoading && (
             <div className="bg-[#F8FAF9] border-b border-slate-200/70 px-3 pt-1.5 pb-2 flex flex-wrap items-start gap-x-2.5 gap-y-1.5 overflow-visible print:hidden shrink-0 animate-slideDown">
+              {/* Nhóm: Trang Word — kích thước, hướng trang, ngắt trang */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <select
+                    title="Kích thước trang"
+                    aria-label="Kích thước trang"
+                    value={wordPageSize}
+                    onChange={(e) => setWordPageSetting(e.target.value as WordPageSize, wordOrientation)}
+                    className="h-8 px-2 text-[11.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  >
+                    <option value="A4">A4</option>
+                    <option value="A3">A3</option>
+                    <option value="Letter">Letter</option>
+                    <option value="Legal">Legal</option>
+                  </select>
+                  <div className="relative">
+                    <select
+                      title="Hướng trang"
+                      aria-label="Hướng trang"
+                      value={wordOrientation}
+                      onChange={(e) => setWordPageSetting(wordPageSize, e.target.value as WordOrientation)}
+                      className="h-8 px-2 text-[11.5px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    >
+                      <option value="portrait">Dọc</option>
+                      <option value="landscape">Ngang</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    title="Ngắt trang"
+                    aria-label="Ngắt trang"
+                    onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+                    onClick={applyWordPageBreak}
+                    className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-[11px] font-semibold shrink-0 cursor-pointer"
+                  >
+                    Ngắt trang
+                  </button>
+                </div>
+                <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Trang</span>
+              </div>
+
+              <div className="w-px h-11 bg-slate-200 mt-1 shrink-0" />
+
               {/* Nhóm: Hoàn tác */}
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <div className="flex items-center gap-1">
@@ -3631,6 +3843,39 @@ export default function HomePage() {
                   <RibbonBtn title="Tăng thụt lề" onClick={() => execFormat('indent')}>
                     <Icon.Indent className="w-4 h-4" />
                   </RibbonBtn>
+                  <select
+                    title="Giãn dòng"
+                    aria-label="Giãn dòng"
+                    defaultValue="1.4"
+                    onMouseDown={saveSelection}
+                    onChange={(e) => applyWordLineSpacing(e.target.value as '1' | '1.15' | '1.5' | '2' | '2.5' | '3')}
+                    className="h-8 px-2 text-[11px] bg-white border border-slate-200 rounded-lg text-slate-700 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  >
+                    <option value="1">1.0</option>
+                    <option value="1.15">1.15</option>
+                    <option value="1.5">1.5</option>
+                    <option value="2">2.0</option>
+                    <option value="2.5">2.5</option>
+                    <option value="3">3.0</option>
+                  </select>
+                  <button
+                    type="button"
+                    title="Thêm khoảng cách trước đoạn"
+                    onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+                    onClick={() => applyWordParagraphSpacing('before')}
+                    className="h-8 px-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-[10px] shrink-0 cursor-pointer"
+                  >
+                    + Trước
+                  </button>
+                  <button
+                    type="button"
+                    title="Xóa khoảng cách sau đoạn"
+                    onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+                    onClick={() => applyWordParagraphSpacing('after', true)}
+                    className="h-8 px-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-[10px] shrink-0 cursor-pointer"
+                  >
+                    − Sau
+                  </button>
                 </div>
                 <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">Đoạn văn</span>
               </div>
@@ -3919,10 +4164,13 @@ export default function HomePage() {
               </div>
             ) : (
               <div
-                className="relative flex flex-col w-[210mm] max-w-full shrink-0 self-start mb-12"
+                className="relative flex flex-col max-w-full shrink-0 self-start mb-12"
                 style={{ zoom: `${wordZoom}%` } as React.CSSProperties}
               >
-                <div className="flex flex-col w-[210mm] max-w-full shrink-0">
+                <div
+                  className="flex flex-col max-w-full shrink-0"
+                  style={{ width: `${getWordPageDimensions().width}mm` }}
+                >
                     <div
                   ref={editorRef}
                   onMouseUp={refreshActiveFormats}
@@ -3938,6 +4186,8 @@ export default function HomePage() {
                   style={{
                     boxSizing: 'border-box',
                     position: 'relative',
+                    width: `${getWordPageDimensions().width}mm`,
+                    minHeight: `${getWordPageDimensions().height}mm`,
                     wordBreak: 'break-word',
                     fontFamily: '"Times New Roman", Times, serif',
                     fontSize: '13pt',
