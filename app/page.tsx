@@ -15,6 +15,7 @@ type ExcelCellStyle = {
   color?: string;
   bg?: string;
   fontSize?: number;
+  border?: { top?: string; right?: string; bottom?: string; left?: string };
 };
 type ExcelCellData = { r: number; c: number; text: string; style?: ExcelCellStyle };
 type ExcelMergeData = { r: number; c: number; rowSpan: number; colSpan: number };
@@ -195,6 +196,10 @@ export default function HomePage() {
   type ExcelSheet = ExcelSheetData;
   type ExcelEditEntry = { text: string; style?: CellStyle };
 
+  const [isExcelBorderMenuOpen, setIsExcelBorderMenuOpen] = useState(false);
+  const [isExcelMergeMenuOpen, setIsExcelMergeMenuOpen] = useState(false);
+  const [isWordBorderMenuOpen, setIsWordBorderMenuOpen] = useState(false);
+  const [isWordMergeMenuOpen, setIsWordMergeMenuOpen] = useState(false);
   const [excelSheets, setExcelSheets] = useState<ExcelSheet[]>([]);
   const [activeSheet, setActiveSheet] = useState<number>(0);
   const [isExcelLoading, setIsExcelLoading] = useState<boolean>(false);
@@ -1327,11 +1332,11 @@ export default function HomePage() {
         partRange.setStart(textNode, startOffset);
         partRange.setEnd(textNode, endOffset);
 
-        const span = document.createElement('span');
-        span.style.fontSize = `${pt}pt`;
-        span.appendChild(partRange.extractContents());
-        partRange.insertNode(span);
-        insertedSpans.unshift(span);
+        const spanElement = document.createElement('span');
+        spanElement.style.fontSize = `${pt}pt`;
+        spanElement.appendChild(partRange.extractContents());
+        partRange.insertNode(spanElement);
+        insertedSpans.unshift(spanElement);
       }
 
       // Giữ lại đúng vùng vừa bôi đen để người dùng có thể tiếp tục
@@ -1355,10 +1360,10 @@ export default function HomePage() {
           .filter((el) => range.intersectsNode(el));
 
         fonts.forEach((el) => {
-          const span = document.createElement('span');
-          span.style.fontSize = `${pt}pt`;
-          while (el.firstChild) span.appendChild(el.firstChild);
-          el.replaceWith(span);
+          const spanElement = document.createElement('span');
+          spanElement.style.fontSize = `${pt}pt`;
+          while (el.firstChild) spanElement.appendChild(el.firstChild);
+          el.replaceWith(spanElement);
         });
       }
     }
@@ -1378,6 +1383,129 @@ export default function HomePage() {
   // ===== CÁC CHỨC NĂNG CƠ BẢN CHO TẤT CẢ FILE WORD =====
   // Các thao tác dưới đây chỉ tác động lên vùng soạn thảo Word hiện tại,
   // không thay đổi giao diện hay dữ liệu của các module khác.
+  const getWordSelectedTableCells = (): HTMLTableCellElement[] => {
+    if (!editorRef.current) return [];
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return [];
+    const range = sel.getRangeAt(0);
+    return Array.from(editorRef.current.querySelectorAll('td,th')).filter((el) => {
+      try { return range.intersectsNode(el); } catch { return false; }
+    }) as HTMLTableCellElement[];
+  };
+
+  const applyWordBorder = (side: 'all'|'top'|'bottom'|'left'|'right'|'none'|'outside'|'thickOutside'|'doubleBottom'|'thickBottom'|'topBottom'|'topThickBottom'|'topDoubleBottom') => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    restoreSelection();
+    const cells = getWordSelectedTableCells();
+    if (cells.length) {
+      const rows = new Map<HTMLTableRowElement, HTMLTableCellElement[]>();
+      cells.forEach(c => { const r=c.parentElement as HTMLTableRowElement; if(r) rows.set(r,[...(rows.get(r)||[]),c]); });
+      const minRow = Math.min(...cells.map(c => c.parentElement ? (c.parentElement as HTMLTableRowElement).rowIndex : 0));
+      const maxRow = Math.max(...cells.map(c => c.parentElement ? (c.parentElement as HTMLTableRowElement).rowIndex : 0));
+      const minCol = Math.min(...cells.map(c => c.cellIndex));
+      const maxCol = Math.max(...cells.map(c => c.cellIndex));
+      cells.forEach((cell) => {
+        if (side === 'none') cell.style.border = 'none';
+        else if (side === 'all') cell.style.border = '1px solid #000';
+        else if (side === 'top') cell.style.borderTop = '1px solid #000';
+        else if (side === 'bottom') cell.style.borderBottom = '1px solid #000';
+        else if (side === 'left') cell.style.borderLeft = '1px solid #000';
+        else if (side === 'right') cell.style.borderRight = '1px solid #000';
+        else if (side === 'outside' || side === 'thickOutside') {
+          const v = side === 'thickOutside' ? '2px solid #000' : '1px solid #000';
+          const r = cell.parentElement ? (cell.parentElement as HTMLTableRowElement).rowIndex : 0;
+          if (r === minRow) cell.style.borderTop = v;
+          if (r === maxRow) cell.style.borderBottom = v;
+          if (cell.cellIndex === minCol) cell.style.borderLeft = v;
+          if (cell.cellIndex === maxCol) cell.style.borderRight = v;
+        } else if (side === 'doubleBottom' && cell.parentElement && (cell.parentElement as HTMLTableRowElement).rowIndex === maxRow) cell.style.borderBottom = '3px double #000';
+        else if (side === 'thickBottom' && cell.parentElement && (cell.parentElement as HTMLTableRowElement).rowIndex === maxRow) cell.style.borderBottom = '2px solid #000';
+        else if (side === 'topBottom') { if ((cell.parentElement as HTMLTableRowElement).rowIndex === minRow) cell.style.borderTop='1px solid #000'; if ((cell.parentElement as HTMLTableRowElement).rowIndex === maxRow) cell.style.borderBottom='1px solid #000'; }
+        else if (side === 'topThickBottom') { if ((cell.parentElement as HTMLTableRowElement).rowIndex === minRow) cell.style.borderTop='1px solid #000'; if ((cell.parentElement as HTMLTableRowElement).rowIndex === maxRow) cell.style.borderBottom='2px solid #000'; }
+        else if (side === 'topDoubleBottom') { if ((cell.parentElement as HTMLTableRowElement).rowIndex === minRow) cell.style.borderTop='1px solid #000'; if ((cell.parentElement as HTMLTableRowElement).rowIndex === maxRow) cell.style.borderBottom='3px double #000'; }
+      });
+      handleInput();
+      return;
+    }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const spanElement = document.createElement('span');
+    if (side === 'none') spanElement.style.border = 'none';
+    else if (side === 'all') spanElement.style.border = '1px solid #000';
+    else if (side === 'thickOutside') spanElement.style.border = '2px solid #000';
+    else if (side === 'doubleBottom') spanElement.style.borderBottom = '3px double #000';
+    else if (side === 'thickBottom') spanElement.style.borderBottom = '2px solid #000';
+    else if (side === 'topBottom') { spanElement.style.borderTop='1px solid #000'; spanElement.style.borderBottom='1px solid #000'; }
+    else if (side === 'topThickBottom') { spanElement.style.borderTop='1px solid #000'; spanElement.style.borderBottom='2px solid #000'; }
+    else if (side === 'topDoubleBottom') { spanElement.style.borderTop='1px solid #000'; spanElement.style.borderBottom='3px double #000'; }
+    else if (side === 'outside') spanElement.style.border = '1px solid #000';
+    else if (side === 'top') spanElement.style.borderTop = '1px solid #000';
+    else if (side === 'bottom') spanElement.style.borderBottom = '1px solid #000';
+    else if (side === 'left') spanElement.style.borderLeft = '1px solid #000';
+    else if (side === 'right') spanElement.style.borderRight = '1px solid #000';
+    spanElement.appendChild(range.extractContents());
+    range.insertNode(spanElement);
+    const nr = document.createRange(); nr.selectNodeContents(spanElement); sel.removeAllRanges(); sel.addRange(nr); savedRangeRef.current = nr.cloneRange();
+    handleInput();
+  };
+
+  const mergeWordCells = (mode: 'center'|'across'|'cells'|'unmerge') => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    restoreSelection();
+    const cells = getWordSelectedTableCells();
+    if (!cells.length) { alert('Hãy chọn các ô trong cùng một bảng Word trước.'); return; }
+    if (mode === 'unmerge') {
+      cells.forEach((cell) => {
+        const colSpan = Math.max(1, cell.colSpan || 1);
+        const rowSpan = Math.max(1, cell.rowSpan || 1);
+        if (colSpan > 1) {
+          cell.colSpan = 1;
+          for (let i=1;i<colSpan;i++) { const n=cell.cloneNode(false) as HTMLTableCellElement; n.innerHTML='&nbsp;'; cell.parentElement?.insertBefore(n,cell.nextSibling); }
+        }
+        if (rowSpan > 1) {
+          const row = cell.parentElement as HTMLTableRowElement | null;
+          const index = row ? cell.cellIndex : 0;
+          cell.rowSpan = 1;
+          for (let rr=1; rr<rowSpan; rr++) {
+            const targetRow = row?.parentElement?.children[row.sectionRowIndex + rr] as HTMLTableRowElement | undefined;
+            if (targetRow) {
+              const n=cell.cloneNode(false) as HTMLTableCellElement; n.innerHTML='&nbsp;'; targetRow.insertBefore(n,targetRow.children[index] || null);
+            }
+          }
+        }
+      });
+      handleInput(); return;
+    }
+    const rows = new Map<HTMLTableRowElement, HTMLTableCellElement[]>();
+    cells.forEach((cell) => { const row=cell.parentElement as HTMLTableRowElement; if (row) rows.set(row,[...(rows.get(row)||[]),cell]); });
+    const rowEntries = Array.from(rows.entries()).sort((a,b)=>a[0].rowIndex-b[0].rowIndex);
+    const mergeRow = (rowCells: HTMLTableCellElement[], center:boolean) => {
+      rowCells.sort((a,b)=>a.cellIndex-b.cellIndex);
+      const first=rowCells[0];
+      const totalColSpan=rowCells.reduce((n,c)=>n+Math.max(1,c.colSpan||1),0);
+      rowCells.slice(1).forEach(c=>c.remove());
+      first.colSpan=totalColSpan;
+      if (center) first.style.textAlign='center';
+    };
+    if (mode === 'across' || rowEntries.length === 1) {
+      rowEntries.forEach(([,rowCells])=>mergeRow(rowCells,mode==='center'));
+    } else {
+      // Merge Cells / Merge & Center theo vùng chữ nhật nhiều dòng: giữ ô đầu và mở rộng cả colSpan + rowSpan.
+      const firstRowCells = rowEntries[0][1].sort((a,b)=>a.cellIndex-b.cellIndex);
+      const first = firstRowCells[0];
+      const colSpan = firstRowCells.reduce((n,c)=>n+Math.max(1,c.colSpan||1),0);
+      rowEntries.slice(1).forEach(([,rowCells])=>rowCells.forEach(c=>c.remove()));
+      firstRowCells.slice(1).forEach(c=>c.remove());
+      first.colSpan = colSpan;
+      first.rowSpan = rowEntries.length;
+      if (mode === 'center') first.style.textAlign='center';
+    }
+    handleInput();
+  };
+
   const selectAllWord = () => {
     if (!editorRef.current) return;
     editorRef.current.focus();
@@ -1556,6 +1684,23 @@ export default function HomePage() {
     | 'upArrow' | 'star' | 'braceLeft' | 'braceRight' | 'arc' | 'curve'
     | 'line' | 'arrowLine' | 'elbow' | 'elbowArrow' | 'curveArrow'
     | 'uLine' | 'doubleBrace' | 'dashedLine';
+
+  type ExcelBorderSide = 'all'|'top'|'bottom'|'left'|'right'|'none'|'outside'|'thickOutside'|'doubleBottom'|'thickBottom'|'topBottom'|'topThickBottom'|'topDoubleBottom';
+  type ExcelMergeMode = 'center'|'across'|'cells'|'unmerge';
+  type WordBorderSide = ExcelBorderSide;
+  type WordMergeMode = ExcelMergeMode;
+  const excelBorderOptions: ReadonlyArray<readonly [ExcelBorderSide, string]> = [
+    ['bottom','Bottom Border'],['top','Top Border'],['left','Left Border'],['right','Right Border'],['none','No Border'],
+    ['all','All Borders'],['outside','Outside Borders'],['thickOutside','Thick Outside Borders'],['doubleBottom','Bottom Double Border'],
+    ['thickBottom','Thick Bottom Border'],['topBottom','Top and Bottom Border'],['topThickBottom','Top and Thick Bottom Border'],
+    ['topDoubleBottom','Top and Double Bottom Border']
+  ];
+  const excelMergeOptions: ReadonlyArray<readonly [ExcelMergeMode, string]> = [
+    ['center','Gộp & căn giữa'],['across','Gộp theo hàng'],['cells','Gộp ô'],['unmerge','Bỏ gộp ô']
+  ];
+  const wordBorderOptions: ReadonlyArray<readonly [WordBorderSide, string]> = excelBorderOptions;
+  const wordMergeOptions: ReadonlyArray<readonly [WordMergeMode, string]> = excelMergeOptions;
+
 
   const insertWordShape = (kind: WordShapeKind) => {
     if (!editorRef.current) return;
@@ -1950,6 +2095,98 @@ export default function HomePage() {
   const isExcelCellSelected = (r: number, c: number) => {
     const b = getExcelSelectionBounds();
     return !!b && r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
+  };
+
+  const selectAllExcelPage = () => {
+    const sheet = excelSheets[activeSheet];
+    if (!sheet || !sheet.rows.length) return;
+    const r1 = sheet.startRow;
+    const r2 = sheet.startRow + sheet.rows.length - 1;
+    const c1 = sheet.startCol;
+    const c2 = sheet.endCol;
+    const first = sheet.rows[0]?.find((cell) => cell.c === c1) || sheet.rows[0]?.[0];
+    if (!first) return;
+    setExcelSelection({ sheetIdx: activeSheet, r1, c1, r2, c2 });
+    setSelectedCell(first);
+    setExcelFormulaValue(first.text);
+  };
+
+  const applyExcelBorderToSelection = (side: 'all'|'top'|'bottom'|'left'|'right'|'none'|'outside'|'thickOutside'|'doubleBottom'|'thickBottom'|'topBottom'|'topThickBottom'|'topDoubleBottom') => {
+    const b = getExcelSelectionBounds();
+    if (!b) return;
+    const line = '1px solid #000000';
+    const thick = '2px solid #000000';
+    const dbl = '3px double #000000';
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        return { ...sheet, rows: sheet.rows.map((rowCells) => rowCells.map((cell) => {
+          if (cell.r < b.r1 || cell.r > b.r2 || cell.c < b.c1 || cell.c > b.c2) return cell;
+          const border = { ...(cell.style?.border || {}) };
+          if (side === 'none') return { ...cell, style: { ...cell.style, border: {} } };
+          if (side === 'all') border.top = border.right = border.bottom = border.left = line;
+          if (side === 'top') border.top = line;
+          if (side === 'bottom') border.bottom = line;
+          if (side === 'left') border.left = line;
+          if (side === 'right') border.right = line;
+          if (side === 'outside' || side === 'thickOutside') {
+            const v = side === 'thickOutside' ? thick : line;
+            if (cell.r === b.r1) border.top = v;
+            if (cell.r === b.r2) border.bottom = v;
+            if (cell.c === b.c1) border.left = v;
+            if (cell.c === b.c2) border.right = v;
+          }
+          if (side === 'doubleBottom' && cell.r === b.r2) border.bottom = dbl;
+          if (side === 'thickBottom' && cell.r === b.r2) border.bottom = thick;
+          if (side === 'topBottom') { if (cell.r === b.r1) border.top = line; if (cell.r === b.r2) border.bottom = line; }
+          if (side === 'topThickBottom') { if (cell.r === b.r1) border.top = line; if (cell.r === b.r2) border.bottom = thick; }
+          if (side === 'topDoubleBottom') { if (cell.r === b.r1) border.top = line; if (cell.r === b.r2) border.bottom = dbl; }
+          return { ...cell, style: { ...cell.style, border } };
+        })) };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
+  };
+
+  const mergeExcelCells = (mode: 'center'|'across'|'cells'|'unmerge') => {
+    const b = getExcelSelectionBounds();
+    if (!b) return;
+    setExcelSheets((prev) => {
+      pushExcelHistory(prev);
+      const next = prev.map((sheet, idx) => {
+        if (idx !== activeSheet) return sheet;
+        const merges = { ...sheet.merges };
+        if (mode === 'unmerge') {
+          Object.entries(merges).forEach(([key, m]) => {
+            const mm = m as ExcelMerge;
+            const overlap = !(mm.r + mm.rowSpan - 1 < b.r1 || mm.r > b.r2 || mm.c + mm.colSpan - 1 < b.c1 || mm.c > b.c2);
+            if (overlap) delete merges[key];
+          });
+        } else {
+          const ranges = mode === 'across'
+            ? Array.from({length: b.r2-b.r1+1}, (_,i) => ({r1:b.r1+i,r2:b.r1+i,c1:b.c1,c2:b.c2}))
+            : [{r1:b.r1,r2:b.r2,c1:b.c1,c2:b.c2}];
+          ranges.forEach(({r1,r2,c1,c2}) => {
+            const key = `${r1}-${c1}`;
+            const overlap = Object.entries(merges).some(([k,m]) => { const mm=m as ExcelMerge; return k !== key && !(mm.r+mm.rowSpan-1<r1 || mm.r>r2 || mm.c+mm.colSpan-1<c1 || mm.c>c2); });
+            if (!overlap) merges[key] = { r:r1,c:c1,rowSpan:r2-r1+1,colSpan:c2-c1+1 };
+          });
+        }
+        let rows = sheet.rows;
+        if (mode === 'center' || mode === 'across') {
+          rows = rows.map(row => row.map(cell => {
+            const inside = cell.r>=b.r1 && cell.r<=b.r2 && cell.c>=b.c1 && cell.c<=b.c2;
+            const shouldCenter = mode === 'center' ? inside : inside && cell.c===b.c1;
+            return shouldCenter ? { ...cell, style:{...cell.style,align:'center'} } : cell;
+          }));
+        }
+        return { ...sheet, rows, merges, skip: rebuildExcelSkip(merges) };
+      });
+      scheduleExcelSave(next);
+      return next;
+    });
   };
 
   const selectExcelCell = (cell: ExcelCell, extend = false) => {
@@ -2927,32 +3164,18 @@ export default function HomePage() {
             </label>
 
             <div className="w-px h-5 bg-slate-200 mx-1" />
+            <div className="relative">
+              <button type="button" disabled={!selectedCell} onClick={() => setIsExcelBorderMenuOpen(v => !v)} title="Viền ô" className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">▦ Viền</button>
+              {isExcelBorderMenuOpen && <div className="absolute left-0 top-8 z-[80] w-[190px] rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl">{excelBorderOptions.map(([k,l]) => <button key={k} type="button" onClick={() => { applyExcelBorderToSelection(k); setIsExcelBorderMenuOpen(false); }} className="w-full text-left px-2.5 py-1.5 text-[11px] rounded hover:bg-slate-50">{l}</button>)}</div>}
+            </div>
+            <div className="w-px h-5 bg-slate-200 mx-1" />
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pr-1 hidden lg:inline">Gộp ô</span>
+            <div className="relative">
+              <button type="button" disabled={!selectedCell} onClick={() => setIsExcelMergeMenuOpen(v => !v)} className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">Gộp ▾</button>
+              {isExcelMergeMenuOpen && <div className="absolute left-0 top-8 z-[80] w-[175px] rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl">{excelMergeOptions.map(([k,l]) => <button key={k} type="button" onClick={() => { mergeExcelCells(k); setIsExcelMergeMenuOpen(false); }} className="w-full text-left px-2.5 py-1.5 text-[11px] rounded hover:bg-slate-50">{l}</button>)}</div>}
+            </div>
 
-            <button
-              onClick={mergeSelectedCellRight}
-              disabled={!selectedCell}
-              title="Gộp với ô bên phải"
-              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-            >
-              Gộp phải
-            </button>
-            <button
-              onClick={mergeSelectedCellDown}
-              disabled={!selectedCell}
-              title="Gộp với ô bên dưới"
-              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-            >
-              Gộp xuống
-            </button>
-            <button
-              onClick={unmergeSelectedCell}
-              disabled={!selectedCell || !Object.values(excelSheets[activeSheet]?.merges || {}).some((m) => selectedCell!.r >= m.r && selectedCell!.r < m.r + m.rowSpan && selectedCell!.c >= m.c && selectedCell!.c < m.c + m.colSpan)}
-              title="Bỏ gộp ô đang chọn"
-              className="inline-flex items-center gap-1 px-2.5 h-7 text-[11.5px] font-semibold text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 rounded-md disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-            >
-              Bỏ gộp
-            </button>
+
 
             <div className="w-px h-5 bg-slate-200 mx-1" />
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pr-1 hidden lg:inline">Dòng / Cột</span>
@@ -3051,7 +3274,7 @@ export default function HomePage() {
                     >
                       <thead>
                         <tr>
-                          <th className="sticky top-0 left-0 z-30 bg-slate-100 border border-slate-300 w-11 h-6 text-[11px]" />
+                          <th onClick={selectAllExcelPage} title="Chọn toàn bộ trang tính" aria-label="Chọn toàn bộ trang tính" className="sticky top-0 left-0 z-30 bg-slate-100 border border-slate-300 w-11 h-6 text-[11px] cursor-pointer hover:bg-slate-200">◢</th>
                           {Array.from({ length: activeSheetData.endCol - activeSheetData.startCol + 1 }, (_, i) => activeSheetData.startCol + i).map((c) => (
                             <th
                               key={c}
@@ -3132,6 +3355,10 @@ export default function HomePage() {
                                       color: cell.style?.color || undefined,
                                       backgroundColor: isSelected ? undefined : cell.style?.bg || undefined,
                                       fontSize: cell.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
+                                      borderTop: cell.style?.border?.top,
+                                      borderRight: cell.style?.border?.right,
+                                      borderBottom: cell.style?.border?.bottom,
+                                      borderLeft: cell.style?.border?.left,
                                       width: getExcelColWidth(activeSheet, cell.c),
                                       height: rowHeight,
                                     }}
@@ -3156,7 +3383,8 @@ export default function HomePage() {
 
           {/* Tab sheet kiểu Excel + thước zoom, đặt ở dưới cùng */}
           <div className="bg-[#E8ECEA] border-t border-slate-300 px-2 py-1 flex items-center justify-between gap-3 shrink-0 print:hidden z-10">
-            <div className="flex items-end gap-0.5 overflow-x-auto no-scrollbar min-w-0">
+            <button type="button" title="Sheet trước" disabled={activeSheet<=0} onClick={() => { const i=Math.max(0,activeSheet-1); setActiveSheet(i); setSelectedCell(null); setExcelSelection(null); }} className="w-7 h-7 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed shrink-0">◀</button>
+            <div className="flex items-end gap-0.5 overflow-x-auto no-scrollbar min-w-0 flex-1">
               {excelSheets.map((sheet, idx) => (
                 <button
                   key={sheet.name + idx}
@@ -3175,7 +3403,10 @@ export default function HomePage() {
                 </button>
               ))}
             </div>
-            <span className="text-[11px] text-slate-400 font-medium shrink-0 pr-1">Nhấp vào ô để chỉnh sửa &middot; 100%</span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button type="button" title="Sheet sau" disabled={activeSheet>=excelSheets.length-1} onClick={() => { const i=Math.min(excelSheets.length-1,activeSheet+1); setActiveSheet(i); setSelectedCell(null); setExcelSelection(null); }} className="w-7 h-7 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
+              <span className="text-[11px] text-slate-400 font-medium shrink-0 pr-1">Nhấp vào ô để chỉnh sửa &middot; 100%</span>
+            </div>
           </div>
         </div>
       );
@@ -3588,6 +3819,14 @@ export default function HomePage() {
                         </div>
                       </div>
                     )}
+                  </div>
+                  <div className="relative">
+                    <button type="button" title="Viền bảng/vùng chọn" onMouseDown={(e)=>{e.preventDefault();saveSelection();}} onClick={()=>setIsWordBorderMenuOpen(v=>!v)} className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shrink-0 transition-colors duration-150 cursor-pointer">▦ Viền</button>
+                    {isWordBorderMenuOpen && <div className="absolute left-0 top-[42px] z-[90] w-[190px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">{wordBorderOptions.map(([k,l])=><button key={k} type="button" onMouseDown={(e)=>e.preventDefault()} onClick={()=>{applyWordBorder(k);setIsWordBorderMenuOpen(false)}} className="w-full text-left px-2.5 py-1.5 text-[11px] rounded-lg hover:bg-slate-50">{l}</button>)}</div>}
+                  </div>
+                  <div className="relative">
+                    <button type="button" title="Gộp ô bảng Word" onMouseDown={(e)=>{e.preventDefault();saveSelection();}} onClick={()=>setIsWordMergeMenuOpen(v=>!v)} className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shrink-0 transition-colors duration-150 cursor-pointer">Gộp ▾</button>
+                    {isWordMergeMenuOpen && <div className="absolute left-0 top-[42px] z-[90] w-[175px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">{wordMergeOptions.map(([k,l])=><button key={k} type="button" onMouseDown={(e)=>e.preventDefault()} onClick={()=>{mergeWordCells(k);setIsWordMergeMenuOpen(false)}} className="w-full text-left px-2.5 py-1.5 text-[11px] rounded-lg hover:bg-slate-50">{l}</button>)}</div>}
                   </div>
                   <button
                     type="button"
