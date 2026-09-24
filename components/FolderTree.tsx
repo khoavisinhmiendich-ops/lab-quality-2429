@@ -284,12 +284,21 @@ const Icon = {
   ),
 };
 
+const PROTECTED_DOCUMENT_PASSWORD = 'VS@2026';
+
 export default function FolderTree({ onSelectFile, selectedFile, searchQuery, onSearchQueryChange }: FolderTreeProps) {
   const [treeData, setTreeData] = useState<DocumentNode[]>([]);
   const [openChapters, setOpenChapters] = useState<Record<string, boolean>>({});
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState<string>('');
+
+  // Bảo vệ riêng danh mục Tài liệu thuộc nhóm "Sổ tay & Tài liệu khác"
+  const [unlockedProtectedCategories, setUnlockedProtectedCategories] = useState<Record<string, boolean>>({});
+  const [passwordModalOpen, setPasswordModalOpen] = useState<boolean>(false);
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [passwordError, setPasswordError] = useState<string>('');
+  const [pendingProtectedCategory, setPendingProtectedCategory] = useState<string | null>(null);
 
   // State Chatbot AI
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
@@ -508,6 +517,50 @@ export default function FolderTree({ onSelectFile, selectedFile, searchQuery, on
     setOpenCategories((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const isProtectedCategory = (chapterId: string, categoryKey: FileCategoryKey) =>
+    chapterId === '__other__' && categoryKey === 'doc';
+
+  const requestProtectedCategoryAccess = (categoryKey: string) => {
+    if (unlockedProtectedCategories[categoryKey]) {
+      toggleCategory(categoryKey);
+      return;
+    }
+
+    setPendingProtectedCategory(categoryKey);
+    setPasswordInput('');
+    setPasswordError('');
+    setPasswordModalOpen(true);
+  };
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (passwordInput === PROTECTED_DOCUMENT_PASSWORD && pendingProtectedCategory) {
+      setUnlockedProtectedCategories((prev) => ({
+        ...prev,
+        [pendingProtectedCategory]: true,
+      }));
+      setOpenCategories((prev) => ({
+        ...prev,
+        [pendingProtectedCategory]: true,
+      }));
+      setPasswordModalOpen(false);
+      setPasswordInput('');
+      setPasswordError('');
+      setPendingProtectedCategory(null);
+      return;
+    }
+
+    setPasswordError('Pass Key không đúng. Vui lòng nhập lại.');
+  };
+
+  const closePasswordModal = () => {
+    setPasswordModalOpen(false);
+    setPasswordInput('');
+    setPasswordError('');
+    setPendingProtectedCategory(null);
+  };
+
   const handleFileClick = (file: DocumentNode) => {
     setSelectedFileId(file.id);
     onSelectFile(file);
@@ -557,13 +610,19 @@ export default function FolderTree({ onSelectFile, selectedFile, searchQuery, on
                   <ul className="space-y-0.5 pl-1">
                     {chapter.categories.map((cat) => {
                       const catKey = `${chapter.id}:${cat.key}`;
-                      const isCatOpen = isSearching ? true : (openCategories[catKey] ?? false);
+                      const protectedCategory = isProtectedCategory(chapter.id, cat.key);
+                      const isCatUnlocked = !protectedCategory || Boolean(unlockedProtectedCategories[catKey]);
+                      const isCatOpen = isCatUnlocked && (isSearching ? true : (openCategories[catKey] ?? false));
                       const CategoryIcon = CATEGORY_ICON[cat.key];
 
                       return (
                         <li key={catKey} className="my-0.5">
                           <div
-                            onClick={() => toggleCategory(catKey)}
+                            onClick={() =>
+                              isProtectedCategory(chapter.id, cat.key)
+                                ? requestProtectedCategoryAccess(catKey)
+                                : toggleCategory(catKey)
+                            }
                             className={`flex items-center gap-2 cursor-pointer font-semibold py-1.5 px-2 rounded-lg transition-colors duration-150 text-[11.5px] select-none hover:bg-slate-50 ${color.text}`}
                           >
                             <Icon.ArrowRight
@@ -624,7 +683,66 @@ export default function FolderTree({ onSelectFile, selectedFile, searchQuery, on
   };
 
   return (
-    <div className="w-full h-full flex flex-col relative font-ui overflow-visible p-4">
+    <>
+      {passwordModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/35 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl animate-slideUpFade">
+            <div className="mb-4 flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50 text-teal-700">
+                <Icon.Layers className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-sm font-bold text-slate-800">Tài liệu được bảo vệ</h2>
+                <p className="text-[11px] text-slate-500">Nhập Pass Key để mở danh mục Tài liệu</p>
+              </div>
+              <button
+                type="button"
+                onClick={closePasswordModal}
+                className="text-slate-400 transition-colors hover:text-slate-700"
+                aria-label="Đóng"
+              >
+                <Icon.X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePasswordSubmit} className="space-y-3">
+              <input
+                type="password"
+                autoFocus
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setPasswordError('');
+                }}
+                placeholder="Nhập Pass Key"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:border-teal-400 focus:bg-white focus:ring-4 focus:ring-teal-500/10"
+              />
+
+              {passwordError && (
+                <p className="text-[11px] font-medium text-rose-600">{passwordError}</p>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={closePasswordModal}
+                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-xl bg-teal-700 px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-teal-600"
+                >
+                  Mở Tài liệu
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="w-full h-full flex flex-col relative font-ui overflow-visible p-4">
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
         .font-display { font-family: 'Fraunces', 'Times New Roman', serif; }
@@ -829,6 +947,7 @@ export default function FolderTree({ onSelectFile, selectedFile, searchQuery, on
           </form>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

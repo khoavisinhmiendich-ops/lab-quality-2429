@@ -103,6 +103,15 @@ export default function HomePage() {
   const [password, setPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
   const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
+
+  // Pass Key riêng cho nhóm Tài liệu trong Sổ tay & Tài liệu khác.
+  // Có thể thay đổi giá trị này khi cần cấu hình lại quyền truy cập.
+  const DOCUMENTS_PASS_KEY = 'VS@2026';
+  const [isDocumentsUnlocked, setIsDocumentsUnlocked] = useState<boolean>(false);
+  const [pendingDocumentFile, setPendingDocumentFile] = useState<DocumentNode | null>(null);
+  const [documentPassKey, setDocumentPassKey] = useState<string>('');
+  const [documentPassError, setDocumentPassError] = useState<string>('');
+
   // --- UI-only state (không ảnh hưởng logic nghiệp vụ) ---
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -666,6 +675,42 @@ export default function HomePage() {
     };
   }, [selectedFile]);
 
+  // Xác định file thuộc nhóm Tài liệu mà không thay đổi cấu trúc FolderTree hiện có.
+  const isProtectedDocumentFile = (file: DocumentNode): boolean => {
+    const searchable = [file.title, file.path, file.fileName, file.id]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase('vi');
+    return searchable.includes('tài liệu') || searchable.includes('tai lieu');
+  };
+
+  const requestDocumentAccess = (file: DocumentNode) => {
+    if (isDocumentsUnlocked || !isProtectedDocumentFile(file)) {
+      setSelectedFile(file);
+      setIsMobileSidebarOpen(false);
+      return;
+    }
+    setPendingDocumentFile(file);
+    setDocumentPassKey('');
+    setDocumentPassError('');
+  };
+
+  const handleDocumentUnlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (documentPassKey === DOCUMENTS_PASS_KEY) {
+      setIsDocumentsUnlocked(true);
+      setDocumentPassError('');
+      if (pendingDocumentFile) {
+        setSelectedFile(pendingDocumentFile);
+        setIsMobileSidebarOpen(false);
+      }
+      setPendingDocumentFile(null);
+      setDocumentPassKey('');
+      return;
+    }
+    setDocumentPassError('Pass Key không chính xác!');
+  };
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -1048,6 +1093,40 @@ export default function HomePage() {
       // tránh thay đổi cấu trúc DOM ngay giữa lúc đang gõ (có thể làm nhảy con trỏ).
     }, 800);
   };
+
+  // Khôi phục hình học Shape từ data-* sau khi HTML được nạp lại.
+  // HTML đã lưu chứa data-shape-width/height/left/top/rotation; cần áp dụng lại
+  // các giá trị này vào inline style vì style khởi tạo của Shape vẫn còn trong mẫu gốc.
+  useEffect(() => {
+    if (!editorRef.current || !htmlContent) return;
+
+    const restoreShapeGeometry = () => {
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      editor.querySelectorAll<HTMLElement>('[data-smart-shape]').forEach((shape) => {
+        const kind = shape.dataset.smartShape || '';
+        const width = Number(shape.dataset.shapeWidth);
+        const height = Number(shape.dataset.shapeHeight);
+        const left = Number(shape.dataset.shapeLeft || 0);
+        const top = Number(shape.dataset.shapeTop || 0);
+        const defaultRotation = kind === 'diamond' ? 45 : 0;
+        const rotationValue = Number(shape.dataset.shapeRotation);
+        const rotation = Number.isFinite(rotationValue) ? rotationValue : defaultRotation;
+
+        if (Number.isFinite(width) && width > 0) shape.style.width = `${width}px`;
+        if (Number.isFinite(height) && height > 0) {
+          shape.style.height = `${height}px`;
+          if (kind !== 'line' && kind !== 'dashedLine') shape.style.minHeight = `${height}px`;
+        }
+
+        shape.style.transform = `translate(${left}px, ${top}px) rotate(${rotation}deg)`;
+      });
+    };
+
+    const frame = window.requestAnimationFrame(restoreShapeGeometry);
+    return () => window.cancelAnimationFrame(frame);
+  }, [htmlContent, selectedFile, isLoading]);
 
   // Kéo thả Shapes bằng chuột: chỉ cập nhật vị trí của đúng shape đang chọn,
   // sau đó dùng handleInput() để lưu HTML hiện tại theo luồng autosave sẵn có.
@@ -4621,8 +4700,7 @@ export default function HomePage() {
             <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar min-w-[220px] lg:min-w-0 ${isSidebarCollapsed ? 'lg:opacity-0 lg:pointer-events-none lg:w-0' : 'opacity-100'}`}>
               <FolderTree
                 onSelectFile={(file) => {
-                  setSelectedFile(file);
-                  setIsMobileSidebarOpen(false);
+                  requestDocumentAccess(file);
                 }}
                 selectedFile={selectedFile}
                 searchQuery={docSearchQuery}
@@ -4699,6 +4777,55 @@ export default function HomePage() {
             </div>
           </main>
         </div>
+
+        {pendingDocumentFile && !isDocumentsUnlocked && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 backdrop-blur-[2px] p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 animate-popIn">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center">
+                  <Icon.Lock className="w-5 h-5 text-teal-700" />
+                </div>
+                <div>
+                  <h3 className="text-[15px] font-bold text-slate-800">Tài liệu được bảo vệ</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Nhập Pass Key để tiếp tục</p>
+                </div>
+              </div>
+              <form onSubmit={handleDocumentUnlock} className="space-y-3">
+                <input
+                  type="password"
+                  value={documentPassKey}
+                  onChange={(e) => setDocumentPassKey(e.target.value)}
+                  placeholder="Nhập Pass Key"
+                  autoFocus
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-4 focus:ring-teal-500/15 focus:border-teal-400 text-[13px] text-slate-800"
+                />
+                {documentPassError && (
+                  <p className="text-[11px] text-rose-600 font-semibold">{documentPassError}</p>
+                )}
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingDocumentFile(null);
+                      setDocumentPassKey('');
+                      setDocumentPassError('');
+                    }}
+                    className="px-4 py-2 rounded-xl text-[12px] font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-[#0E3A41] hover:bg-[#0A2C31] text-white text-[12px] font-bold cursor-pointer"
+                  >
+                    Mở Tài liệu
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
