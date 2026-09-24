@@ -104,6 +104,13 @@ export default function HomePage() {
   const [loginError, setLoginError] = useState<string>('');
   const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
 
+  // Pass Key riêng cho nhóm Tài liệu trong Sổ tay & Tài liệu khác.
+  // Có thể thay đổi giá trị này khi cần cấu hình lại quyền truy cập.
+  const DOCUMENTS_PASS_KEY = 'VS@2026';
+  const [isDocumentsUnlocked, setIsDocumentsUnlocked] = useState<boolean>(false);
+  const [pendingDocumentFile, setPendingDocumentFile] = useState<DocumentNode | null>(null);
+  const [documentPassKey, setDocumentPassKey] = useState<string>('');
+  const [documentPassError, setDocumentPassError] = useState<string>('');
 
   // --- UI-only state (không ảnh hưởng logic nghiệp vụ) ---
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
@@ -368,6 +375,18 @@ export default function HomePage() {
     return sig.every((b, i) => bytes[i] === b);
   };
 
+  // Khóa lưu dữ liệu ổn định: chỉ dựa vào selectedFile.id, tuyệt đối không phụ thuộc index/title/path.
+  // Legacy key được giữ lại để đọc/migrate dữ liệu đã lưu từ phiên bản cũ.
+  const getStableDocumentKey = (prefix: string, file: DocumentNode | null | undefined): string => {
+    if (!file?.id) return '';
+    return `${prefix}_${file.id}`;
+  };
+
+  const getLegacyDocumentKey = (prefix: string, file: DocumentNode | null | undefined): string => {
+    if (!file) return '';
+    return `${prefix}_${file.id || file.title || file.path}`;
+  };
+
   // Tải & chuyển đổi file Word (.docx) — giữ nguyên logic gốc
   useEffect(() => {
     if (!selectedFile) return;
@@ -376,8 +395,14 @@ export default function HomePage() {
     if (fileType !== 'word' || !selectedFile.path) return;
 
     let isSubscribed = true;
-    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    const docKey = getStableDocumentKey('doc', selectedFile);
+    const legacyDocKey = getLegacyDocumentKey('doc', selectedFile);
+    if (!docKey) {
+      console.error('Tài liệu không có ID ổn định; không thể khôi phục/lưu dữ liệu an toàn.');
+      return;
+    }
     const pageSettingsKey = `${docKey}_page_settings`;
+    const legacyPageSettingsKey = `${legacyDocKey}_page_settings`;
 
     const loadDocument = async () => {
       if (isSubscribed) {
@@ -388,7 +413,9 @@ export default function HomePage() {
         // trực tiếp trong thân effect, tránh cascading renders theo React lint.
         let savedSize: WordPageSize = 'A4';
         let savedOrientation: WordOrientation = 'portrait';
-        const savedPageSettings = localStorage.getItem(pageSettingsKey);
+        const savedPageSettings =
+          localStorage.getItem(pageSettingsKey) ||
+          (legacyDocKey !== docKey ? localStorage.getItem(legacyPageSettingsKey) : null);
         if (savedPageSettings) {
           try {
             const parsed: unknown = JSON.parse(savedPageSettings);
@@ -429,12 +456,33 @@ export default function HomePage() {
         // có thể vẫn còn phiên bản cũ. Ưu tiên bản cục bộ giúp mở lại app không mất
         // Shapes/chỉnh sửa vừa thực hiện.
         const savedLocal = localStorage.getItem(docKey);
-        if (savedLocal) {
+        const legacySavedLocal = !savedLocal && legacyDocKey !== docKey
+          ? localStorage.getItem(legacyDocKey)
+          : null;
+        const localContent = savedLocal || legacySavedLocal;
+
+        if (localContent) {
+          // Nếu dữ liệu chỉ tồn tại theo key cũ, chuyển ngay sang key ổn định.
+          localStorage.setItem(docKey, localContent);
+          if (legacyDocKey !== docKey) localStorage.removeItem(legacyDocKey);
           if (isSubscribed) {
-            setHtmlContent(savedLocal);
-            setWordCount(computeWordCount(savedLocal));
+            setHtmlContent(localContent);
+            setWordCount(computeWordCount(localContent));
             setIsSaved(true);
             setIsLoading(false);
+          }
+          // Đồng bộ bản legacy sang Cloud bằng key ổn định để dữ liệu vẫn còn sau Ctrl+F5/restart.
+          if (!savedLocal && legacySavedLocal) {
+            void fetch('/api/document-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key: docKey,
+                content: legacySavedLocal,
+                path: selectedFile.path,
+                fileName: selectedFile.fileName || selectedFile.title,
+              }),
+            }).catch((err) => console.error('Lỗi migrate dữ liệu Word local → Cloud:', err));
           }
           return;
         }
@@ -444,8 +492,6 @@ export default function HomePage() {
 
         if (cloudData && cloudData.content) {
           if (isSubscribed) {
-            // Đồng bộ lại bản Cloud xuống local để những lần mở sau vẫn có dữ liệu
-            // ngay cả khi mạng/API tạm thời không khả dụng.
             localStorage.setItem(docKey, cloudData.content);
             setHtmlContent(cloudData.content);
             setWordCount(computeWordCount(cloudData.content));
@@ -453,6 +499,39 @@ export default function HomePage() {
             setIsLoading(false);
           }
           return;
+        }
+
+        // Tương thích dữ liệu Cloud cũ: nếu key ổn định chưa có, đọc key legacy và
+        // lập tức sao chép sang key ổn định. Nhờ vậy dữ liệu cũ không bị coi là mất.
+        if (legacyDocKey !== docKey) {
+          try {
+            const legacyCloudRes = await fetch(
+              `/api/document-data?key=${encodeURIComponent(legacyDocKey)}`
+            );
+            const legacyCloudData = await legacyCloudRes.json();
+            if (legacyCloudData && legacyCloudData.content) {
+              localStorage.setItem(docKey, legacyCloudData.content);
+              await fetch('/api/document-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  key: docKey,
+                  content: legacyCloudData.content,
+                  path: selectedFile.path,
+                  fileName: selectedFile.fileName || selectedFile.title,
+                }),
+              });
+              if (isSubscribed) {
+                setHtmlContent(legacyCloudData.content);
+                setWordCount(computeWordCount(legacyCloudData.content));
+                setIsSaved(true);
+                setIsLoading(false);
+              }
+              return;
+            }
+          } catch (err) {
+            console.error('Lỗi đọc/migrate dữ liệu Word legacy:', err);
+          }
         }
 
         if (!originalArrayBuffer) throw new Error('Không thể tải file gốc');
@@ -513,7 +592,12 @@ export default function HomePage() {
     if (fileType !== 'excel' || !selectedFile.path) return;
 
     let isSubscribed = true;
-    const excelDocKey = `xlsx_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    const excelDocKey = getStableDocumentKey('xlsx', selectedFile);
+    const legacyExcelDocKey = getLegacyDocumentKey('xlsx', selectedFile);
+    if (!excelDocKey) {
+      console.error('File Excel không có ID ổn định; không thể khôi phục/lưu dữ liệu an toàn.');
+      return;
+    }
 
     const loadExcel = async () => {
       if (isSubscribed) {
@@ -550,11 +634,40 @@ export default function HomePage() {
         } catch {
           // bỏ qua, sẽ thử localStorage
         }
+
+        // Tương thích key Excel cũ để không làm mất dữ liệu đã chỉnh sửa trước đây.
+        if (!savedEdits && legacyExcelDocKey !== excelDocKey) {
+          try {
+            const legacyCloudRes = await fetch(
+              `/api/document-data?key=${encodeURIComponent(legacyExcelDocKey)}`
+            );
+            const legacyCloudData = await legacyCloudRes.json();
+            if (legacyCloudData && legacyCloudData.content) {
+              savedEdits = JSON.parse(legacyCloudData.content);
+              void fetch('/api/document-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  key: excelDocKey,
+                  content: legacyCloudData.content,
+                  path: selectedFile.path,
+                  fileName: selectedFile.fileName || selectedFile.title,
+                }),
+              }).catch((err) => console.error('Lỗi migrate Excel legacy → Cloud:', err));
+            }
+          } catch {
+            // bỏ qua, sẽ thử localStorage
+          }
+        }
+
         if (!savedEdits) {
-          const savedLocal = localStorage.getItem(excelDocKey);
+          const savedLocal = localStorage.getItem(excelDocKey)
+            || (legacyExcelDocKey !== excelDocKey ? localStorage.getItem(legacyExcelDocKey) : null);
           if (savedLocal) {
             try {
               savedEdits = JSON.parse(savedLocal);
+              localStorage.setItem(excelDocKey, savedLocal);
+              if (legacyExcelDocKey !== excelDocKey) localStorage.removeItem(legacyExcelDocKey);
             } catch {
               savedEdits = null;
             }
@@ -667,6 +780,42 @@ export default function HomePage() {
       if (excelSaveTimeoutRef.current) clearTimeout(excelSaveTimeoutRef.current);
     };
   }, [selectedFile]);
+
+  // Xác định file thuộc nhóm Tài liệu mà không thay đổi cấu trúc FolderTree hiện có.
+  const isProtectedDocumentFile = (file: DocumentNode): boolean => {
+    const searchable = [file.title, file.path, file.fileName, file.id]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase('vi');
+    return searchable.includes('tài liệu') || searchable.includes('tai lieu');
+  };
+
+  const requestDocumentAccess = (file: DocumentNode) => {
+    if (isDocumentsUnlocked || !isProtectedDocumentFile(file)) {
+      setSelectedFile(file);
+      setIsMobileSidebarOpen(false);
+      return;
+    }
+    setPendingDocumentFile(file);
+    setDocumentPassKey('');
+    setDocumentPassError('');
+  };
+
+  const handleDocumentUnlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (documentPassKey === DOCUMENTS_PASS_KEY) {
+      setIsDocumentsUnlocked(true);
+      setDocumentPassError('');
+      if (pendingDocumentFile) {
+        setSelectedFile(pendingDocumentFile);
+        setIsMobileSidebarOpen(false);
+      }
+      setPendingDocumentFile(null);
+      setDocumentPassKey('');
+      return;
+    }
+    setDocumentPassError('Pass Key không chính xác!');
+  };
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1024,7 +1173,8 @@ export default function HomePage() {
     if (!selectedFile || !editorRef.current) return;
     setIsSaved(false);
 
-    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    const docKey = getStableDocumentKey('doc', selectedFile);
+    if (!docKey) return;
     // Luôn lấy nội dung/đếm từ từ bản sao đã loại bỏ khối ngăn trang — đảm bảo không bao giờ
     // lưu nhầm hoặc đếm nhầm phần trang trí (khối ngăn trang) vào tài liệu thật.
     const { html: newContent, text: plainText } = getCleanEditorSnapshot();
@@ -1040,7 +1190,12 @@ export default function HomePage() {
         await fetch('/api/document-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: docKey, content: newContent }),
+          body: JSON.stringify({
+            key: docKey,
+            content: newContent,
+            path: selectedFile.path,
+            fileName: selectedFile.fileName || selectedFile.title,
+          }),
         });
         setIsSaved(true);
       } catch (err) {
@@ -1475,7 +1630,8 @@ export default function HomePage() {
     setWordPageSize(size);
     setWordOrientation(orientation);
     if (selectedFile) {
-      const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+      const docKey = getStableDocumentKey('doc', selectedFile);
+    if (!docKey) return;
       localStorage.setItem(`${docKey}_page_settings`, JSON.stringify({ size, orientation }));
     }
   };
@@ -2124,9 +2280,12 @@ export default function HomePage() {
 
   const handleReset = async () => {
     if (!selectedFile || !selectedFile.path) return;
-    const docKey = `doc_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    const docKey = getStableDocumentKey('doc', selectedFile);
+    const legacyDocKey = getLegacyDocumentKey('doc', selectedFile);
+    if (!docKey) return;
 
     localStorage.removeItem(docKey);
+    if (legacyDocKey !== docKey) localStorage.removeItem(legacyDocKey);
     setIsLoading(true);
 
     try {
@@ -2135,6 +2294,13 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: docKey, content: null }),
       });
+      if (legacyDocKey !== docKey) {
+        await fetch('/api/document-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: legacyDocKey, content: null }),
+        });
+      }
 
       const res = await fetch(selectedFile.path);
       const arrayBuffer = await res.arrayBuffer();
@@ -2184,8 +2350,7 @@ export default function HomePage() {
 
   // ---- Chỉnh sửa trực tiếp bảng tính Excel (kiểu giống Excel) + tự động lưu ----
   const getExcelDocKey = () => {
-    if (!selectedFile) return '';
-    return `xlsx_${selectedFile.id || selectedFile.title || selectedFile.path}`;
+    return getStableDocumentKey('xlsx', selectedFile);
   };
 
   // Đọc toàn bộ chỉnh sửa hiện tại (theo từng sheet) từ excelSheets đang hiển thị,
@@ -2235,7 +2400,12 @@ export default function HomePage() {
       await fetch('/api/document-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: docKey, content: serialized }),
+        body: JSON.stringify({
+          key: docKey,
+          content: serialized,
+          path: selectedFile?.path || null,
+          fileName: selectedFile?.fileName || selectedFile?.title || null,
+        }),
       });
       setIsExcelSaved(true);
     } catch (err) {
@@ -4657,8 +4827,7 @@ export default function HomePage() {
             <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar min-w-[220px] lg:min-w-0 ${isSidebarCollapsed ? 'lg:opacity-0 lg:pointer-events-none lg:w-0' : 'opacity-100'}`}>
               <FolderTree
                 onSelectFile={(file) => {
-                  setSelectedFile(file);
-                  setIsMobileSidebarOpen(false);
+                  requestDocumentAccess(file);
                 }}
                 selectedFile={selectedFile}
                 searchQuery={docSearchQuery}
@@ -4736,7 +4905,54 @@ export default function HomePage() {
           </main>
         </div>
 
-
+        {pendingDocumentFile && !isDocumentsUnlocked && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 backdrop-blur-[2px] p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 animate-popIn">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center">
+                  <Icon.Lock className="w-5 h-5 text-teal-700" />
+                </div>
+                <div>
+                  <h3 className="text-[15px] font-bold text-slate-800">Tài liệu được bảo vệ</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Nhập Pass Key để tiếp tục</p>
+                </div>
+              </div>
+              <form onSubmit={handleDocumentUnlock} className="space-y-3">
+                <input
+                  type="password"
+                  value={documentPassKey}
+                  onChange={(e) => setDocumentPassKey(e.target.value)}
+                  placeholder="Nhập Pass Key"
+                  autoFocus
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-4 focus:ring-teal-500/15 focus:border-teal-400 text-[13px] text-slate-800"
+                />
+                {documentPassError && (
+                  <p className="text-[11px] text-rose-600 font-semibold">{documentPassError}</p>
+                )}
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingDocumentFile(null);
+                      setDocumentPassKey('');
+                      setDocumentPassError('');
+                    }}
+                    className="px-4 py-2 rounded-xl text-[12px] font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-[#0E3A41] hover:bg-[#0A2C31] text-white text-[12px] font-bold cursor-pointer"
+                  >
+                    Mở Tài liệu
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
